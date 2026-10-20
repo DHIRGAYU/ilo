@@ -1,0 +1,15 @@
+:root:has(.site-root) { scroll-behavior: smooth; }
+
+@keyframes site-fade {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.site-hero-in { animation: site-fade 0.9s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root:has(.site-root) { scroll-behavior: auto; }
+  .site-root *, .site-root *::before, .site-root *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+}
