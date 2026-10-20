@@ -31,15 +31,45 @@ export const getWorkspace = cache(async () => {
   ]);
 
   const ids = (convos ?? []).map((c) => c.id as string);
-  const { data: msgs } = ids.length
-    ? await supabase
-        .from("messages")
-        .select("conversation_id, sender_role, body, created_at")
-        .in("conversation_id", ids)
-        .gte("created_at", new Date(nowMs - 60 * 86_400_000).toISOString())
-        .order("created_at", { ascending: false })
-        .limit(500)
-    : { data: [] };
+  const studentIds = Array.from(
+    new Set([
+      ...(appts ?? []).map((a) => a.student_id as string),
+      ...(convos ?? []).map((c) => c.student_id as string),
+    ])
+  ).filter(Boolean);
+
+  const [{ data: msgs }, { data: studentProfiles }] = await Promise.all([
+    ids.length
+      ? supabase
+          .from("messages")
+          .select("conversation_id, sender_role, body, created_at")
+          .in("conversation_id", ids)
+          .gte("created_at", new Date(nowMs - 60 * 86_400_000).toISOString())
+          .order("created_at", { ascending: false })
+          .limit(500)
+      : Promise.resolve({ data: [] }),
+    studentIds.length
+      ? supabase.from("profiles").select("id, full_name").in("id", studentIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const studentNames: Record<string, string> = {};
+  if (studentProfiles && studentProfiles.length > 0) {
+    for (const p of studentProfiles) {
+      if (p.full_name?.trim()) studentNames[p.id] = p.full_name.trim();
+    }
+  }
+
+  // Fallback to security definer RPC if profiles select was empty/restricted
+  if (Object.keys(studentNames).length === 0 && studentIds.length > 0) {
+    const { data: rpcProfiles } = await supabase
+      .rpc("get_student_profiles_for_counsellor", { p_student_ids: studentIds });
+    if (rpcProfiles && Array.isArray(rpcProfiles)) {
+      for (const p of rpcProfiles) {
+        if (p.full_name?.trim()) studentNames[p.id] = p.full_name.trim();
+      }
+    }
+  }
 
   const dash = buildDashboard({
     appts: (appts ?? []) as Appt[],
@@ -48,6 +78,7 @@ export const getWorkspace = cache(async () => {
     availability: me.counsellor_availability ?? [],
     capacity: me.caseload_capacity ?? 25,
     nowMs,
+    studentNames,
   });
 
   const initials = me.display_name

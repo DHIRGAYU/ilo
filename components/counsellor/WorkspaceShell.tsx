@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, BookOpen, CalendarDays, Home, HeartHandshake, Inbox, LogOut, Menu, Phone, Search, Settings, ShieldAlert, Users, X } from "lucide-react";
+import { Activity, Bell, BookOpen, CalendarDays, ChevronDown, Home, HeartHandshake, Inbox, LogOut, Menu, Phone, Search, Settings, ShieldAlert, Sparkles, Users, X } from "lucide-react";
 
 const NAV = [
   { href: "/counsellor", label: "Dashboard", icon: Home, badge: null },
@@ -68,18 +68,69 @@ export function WorkspaceShell({ fullName, initials, college, badges, children }
 
   return (
     <div className="min-h-dvh bg-ilo-bg text-ilo-ink">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-ilo-plum/10 bg-white px-3 py-5 lg:flex">
-        <Brand />
-        <NavList badges={badges} />
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col justify-between border-r border-ilo-plum/10 bg-white px-3 py-5 lg:flex">
+        <div>
+          <Brand />
+          <NavList badges={badges} />
+        </div>
+
+        <div className="space-y-3 pt-4 border-t border-ilo-plum/10">
+          {/* Auto-reply toggle card */}
+          <div className="flex items-center justify-between rounded-2xl border border-ilo-plum/10 bg-ilo-bg p-2.5">
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-ilo-blush text-ilo-plum">
+                <Sparkles className="h-3.5 w-3.5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold text-ilo-deep leading-tight">Auto-reply on</p>
+                <p className="text-[9px] text-ilo-ink/60 leading-tight">Until 2:30 PM · your time</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked="true"
+              className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-ilo-plum transition-colors duration-200 ease-in-out focus:outline-none"
+            >
+              <span className="translate-x-4 pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" />
+            </button>
+          </div>
+
+          {/* Counsellor Profile card */}
+          <div className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-ilo-blush/40 transition-colors cursor-pointer">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ilo-blush text-xs font-bold text-ilo-plum ring-1 ring-ilo-plum/15">
+              {initials}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-bold text-ilo-deep">{fullName}</p>
+              <p className="truncate text-[10px] text-ilo-ink/60">On-campus counsellor</p>
+            </div>
+            <ChevronDown className="h-3.5 w-3.5 text-ilo-ink/40" />
+          </div>
+        </div>
       </aside>
 
       {drawer && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-ilo-deep/40" onClick={() => setDrawer(false)} aria-hidden="true" />
-          <div role="dialog" aria-modal="true" aria-label="Menu" className="absolute inset-y-0 left-0 w-64 bg-white px-3 py-5 shadow-2xl">
-            <button type="button" onClick={() => setDrawer(false)} aria-label="Close menu" className="absolute right-2 top-2 p-2 text-ilo-ink/70"><X className="h-5 w-5" /></button>
-            <Brand />
-            <NavList badges={badges} onNavigate={() => setDrawer(false)} />
+          <div role="dialog" aria-modal="true" aria-label="Menu" className="absolute inset-y-0 left-0 w-64 bg-white px-3 py-5 shadow-2xl flex flex-col justify-between">
+            <div>
+              <button type="button" onClick={() => setDrawer(false)} aria-label="Close menu" className="absolute right-2 top-2 p-2 text-ilo-ink/70"><X className="h-5 w-5" /></button>
+              <Brand />
+              <NavList badges={badges} onNavigate={() => setDrawer(false)} />
+            </div>
+
+            <div className="space-y-3 pt-4 border-t border-ilo-plum/10">
+              <div className="flex items-center gap-2 rounded-xl px-2 py-1.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ilo-blush text-xs font-bold text-ilo-plum ring-1 ring-ilo-plum/15">
+                  {initials}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-bold text-ilo-deep">{fullName}</p>
+                  <p className="truncate text-[10px] text-ilo-ink/60">On-campus counsellor</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -89,9 +140,12 @@ export function WorkspaceShell({ fullName, initials, college, badges, children }
           <button type="button" onClick={() => setDrawer(true)} aria-label="Open menu" className="-ml-2 p-2 text-ilo-ink lg:hidden"><Menu className="h-5 w-5" /></button>
           <p className="min-w-0 flex-1 truncate text-xs text-ilo-ink/60">Counsellor space <span className="mx-1">/</span> <span className="font-semibold text-ilo-plum">{current}</span></p>
 
-          <label className="hidden h-9 w-64 items-center gap-2 rounded-full border border-ilo-plum/10 bg-white px-3 text-xs text-ilo-ink/50 md:flex">
-            <Search className="h-3.5 w-3.5" />
-            <input disabled aria-label="Search (coming soon)" placeholder="Search aliases, notes…" title="Search arrives with the Students screen" className="w-full bg-transparent outline-none placeholder:text-ilo-ink/40" />
+          <label className="hidden h-9 w-72 items-center justify-between gap-2 rounded-full border border-ilo-plum/10 bg-white px-3 text-xs text-ilo-ink/50 md:flex">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <Search className="h-3.5 w-3.5 shrink-0" />
+              <input disabled aria-label="Search (coming soon)" placeholder="Search students, notes…" title="Search arrives with the Students screen" className="w-full bg-transparent outline-none placeholder:text-ilo-ink/40" />
+            </div>
+            <kbd className="shrink-0 rounded border border-ilo-plum/15 bg-ilo-bg px-1.5 py-0.5 text-[10px] font-medium text-ilo-ink/40">⌘ K</kbd>
           </label>
 
           <div className="hidden items-center rounded-full border border-ilo-plum/10 bg-white p-0.5 text-[11px] font-semibold sm:flex" aria-label="Language">

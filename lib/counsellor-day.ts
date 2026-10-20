@@ -22,15 +22,15 @@ export type Msg = { conversation_id: string; sender_role: "student" | "counsello
 export const MODE_LABEL = { in_person: "In person", video: "Private video", phone: "Phone call" } as const;
 
 export type SessionItem = {
-  id: string; alias: string; startMs: number; endMs: number; label: string;
+  id: string; alias: string; studentName: string; startMs: number; endMs: number; label: string;
   type: "Initial conversation" | "Follow-up"; mode: Appt["mode"]; state: "done" | "now" | "next" | "later";
 };
-export type AttentionItem = { key: string; kind: "New request" | "New message" | "Cancelled" | "Rescheduled"; icon: "message" | "calendar"; alias: string; text: string; atMs: number };
+export type AttentionItem = { key: string; kind: "New request" | "New message" | "Cancelled" | "Rescheduled"; icon: "message" | "calendar"; alias: string; studentName: string; text: string; atMs: number };
 export type Dashboard = {
   greeting: "morning" | "afternoon" | "evening";
   dateLabel: string; dateChip: string;
   sessions: SessionItem[];
-  next: { id: string; alias: string; mode: Appt["mode"]; startMs: number; inProgress: boolean; isToday: boolean; minutesUntil: number; timeLabel: string; dayLabel: string } | null;
+  next: { id: string; alias: string; studentName: string; mode: Appt["mode"]; startMs: number; inProgress: boolean; isToday: boolean; minutesUntil: number; timeLabel: string; dayLabel: string } | null;
   unread: number; triage: number; followUps: number;
   attention: AttentionItem[];
   caseload: { active: number; capacity: number; pct: number; label: "Steady" | "Busy" | "At capacity" };
@@ -83,8 +83,8 @@ export function nextOpenGap(windows: [number, number][], busy: [number, number][
   return null;
 }
 
-export function buildDashboard(i: { appts: Appt[]; convos: Convo[]; msgs: Msg[]; availability: AvailSlot[]; capacity: number; nowMs: number }): Dashboard {
-  const { appts, convos, msgs, availability, capacity, nowMs } = i;
+export function buildDashboard(i: { appts: Appt[]; convos: Convo[]; msgs: Msg[]; availability: AvailSlot[]; capacity: number; nowMs: number; studentNames?: Record<string, string> }): Dashboard {
+  const { appts, convos, msgs, availability, capacity, nowMs, studentNames } = i;
   const dayStart = istMidnight(nowMs), dayEnd = dayStart + DAY;
   const nowMin = minutesOf(nowMs);
   const startOf = (a: Appt) => Date.parse(a.starts_at);
@@ -98,8 +98,10 @@ export function buildDashboard(i: { appts: Appt[]; convos: Convo[]; msgs: Msg[];
   const nextIdx = today.findIndex((a) => Date.parse(a.ends_at) > nowMs);
   const sessions: SessionItem[] = today.map((a, idx) => {
     const s = startOf(a), e = Date.parse(a.ends_at);
+    const alias = studentAlias(a.student_id);
+    const studentName = studentNames?.[a.student_id] || `Student #${alias}`;
     return {
-      id: a.id, alias: studentAlias(a.student_id), startMs: s, endMs: e, label: hhmm(s),
+      id: a.id, alias, studentName, startMs: s, endMs: e, label: hhmm(s),
       type: firstStart.get(a.student_id) === s ? "Initial conversation" : "Follow-up", mode: a.mode,
       state: e <= nowMs ? "done" : idx === nextIdx ? (s <= nowMs ? "now" : "next") : "later",
     };
@@ -107,10 +109,16 @@ export function buildDashboard(i: { appts: Appt[]; convos: Convo[]; msgs: Msg[];
 
   const up = confirmed.find((a) => Date.parse(a.ends_at) > nowMs);
   const next = up ? {
-    id: up.id, alias: studentAlias(up.student_id), mode: up.mode, startMs: startOf(up),
-    inProgress: startOf(up) <= nowMs, isToday: startOf(up) < dayEnd,
+    id: up.id,
+    alias: studentAlias(up.student_id),
+    studentName: studentNames?.[up.student_id] || `Student #${studentAlias(up.student_id)}`,
+    mode: up.mode,
+    startMs: startOf(up),
+    inProgress: startOf(up) <= nowMs,
+    isToday: startOf(up) < dayEnd,
     minutesUntil: Math.max(0, Math.round((startOf(up) - nowMs) / 60_000)),
-    timeLabel: clock(minutesOf(startOf(up))), dayLabel: wdLongF.format(startOf(up)),
+    timeLabel: clock(minutesOf(startOf(up))),
+    dayLabel: wdLongF.format(startOf(up)),
   } : null;
 
   // Messages: unread, awaiting a first reply, and what needs attention
@@ -127,7 +135,9 @@ export function buildDashboard(i: { appts: Appt[]; convos: Convo[]; msgs: Msg[];
     const last = list[0];
     if (last.sender_role === "student") {
       if (!everReplied) triage++;
-      attention.push({ key: `m-${c.id}`, kind: everReplied ? "New message" : "New request", icon: "message", alias: studentAlias(c.student_id), text: snippet(last.body), atMs: Date.parse(last.created_at) });
+      const alias = studentAlias(c.student_id);
+      const studentName = studentNames?.[c.student_id] || `Student #${alias}`;
+      attention.push({ key: `m-${c.id}`, kind: everReplied ? "New message" : "New request", icon: "message", alias, studentName, text: snippet(last.body), atMs: Date.parse(last.created_at) });
     }
   }
   for (const a of appts) {
@@ -135,8 +145,10 @@ export function buildDashboard(i: { appts: Appt[]; convos: Convo[]; msgs: Msg[];
     const at = Date.parse(a.cancelled_at);
     if (nowMs - at > 3 * DAY) continue;
     const moved = appts.find((b) => b.status === "confirmed" && b.student_id === a.student_id && b.id !== a.id && Math.abs(Date.parse(b.created_at) - at) < 60_000);
+    const alias = studentAlias(a.student_id);
+    const studentName = studentNames?.[a.student_id] || `Student #${alias}`;
     attention.push({
-      key: `c-${a.id}`, kind: moved ? "Rescheduled" : "Cancelled", icon: "calendar", alias: studentAlias(a.student_id), atMs: at,
+      key: `c-${a.id}`, kind: moved ? "Rescheduled" : "Cancelled", icon: "calendar", alias, studentName, atMs: at,
       text: moved ? `Moved a session to ${whenShort(startOf(moved))}.` : `Cancelled the ${whenShort(startOf(a))} session.`,
     });
   }
