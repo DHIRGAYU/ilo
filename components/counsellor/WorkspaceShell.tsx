@@ -91,7 +91,7 @@ export function WorkspaceShell({ fullName, initials, college, badges, children }
 
           <label className="hidden h-9 w-64 items-center gap-2 rounded-full border border-ilo-plum/10 bg-white px-3 text-xs text-ilo-ink/50 md:flex">
             <Search className="h-3.5 w-3.5" />
-            <input disabled aria-label="Search (coming soon)" placeholder="Search aliases, notes…" title="Search arrives with the Students screen" className="w-full bg-transparent outline-none placeholder:text-ilo-ink/40" />
+            <input disabled aria-label="Search (coming soon)" placeholder="Search students, notes…" title="Search arrives with the Students screen" className="w-full bg-transparent outline-none placeholder:text-ilo-ink/40" />
           </label>
 
           <div className="hidden items-center rounded-full border border-ilo-plum/10 bg-white p-0.5 text-[11px] font-semibold sm:flex" aria-label="Language">

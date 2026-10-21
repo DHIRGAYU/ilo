@@ -72,7 +72,7 @@ export default async function DashboardPage() {
               </p>
               <h2 id="next-title" className="mt-2 font-display text-2xl lg:text-3xl">Room to pause, together.</h2>
               <p className="mt-2 max-w-md text-xs leading-relaxed text-white/80">
-                A quiet check-in with Student #{nx.alias}. {nx.mode === "video" ? "Your private room is ready when you are." : nx.mode === "phone" ? "You'll be calling them at the start time." : "You'll be meeting in person."}
+                A quiet check-in with {nx.alias}. {nx.mode === "video" ? "Your private room is ready when you are." : nx.mode === "phone" ? "You'll be calling them at the start time." : "You'll be meeting in person."}
               </p>
               {nx.mode === "video" && (
                 <p className="mt-4 flex flex-wrap items-center gap-3 text-[11px] text-white/70">
@@ -83,7 +83,7 @@ export default async function DashboardPage() {
             </div>
             <dl className="relative flex items-center gap-6 lg:gap-8">
               <span className="hidden h-12 w-12 items-center justify-center rounded-full bg-white/15 sm:flex" aria-hidden="true"><User className="h-5 w-5" /></span>
-              <div><dt className="text-[10px] font-bold uppercase tracking-wider text-white/60">Student</dt><dd className="mt-1 text-xs font-bold">Student #{nx.alias}</dd></div>
+              <div><dt className="text-[10px] font-bold uppercase tracking-wider text-white/60">Student</dt><dd className="mt-1 text-xs font-bold">{nx.alias}</dd></div>
               <div><dt className="text-[10px] font-bold uppercase tracking-wider text-white/60">Starts</dt><dd className="mt-1 text-xs font-bold">{nx.timeLabel.toUpperCase()}</dd></div>
               <div><dt className="text-[10px] font-bold uppercase tracking-wider text-white/60">Format</dt><dd className="mt-1 text-xs font-bold">{MODE_LABEL[nx.mode]}</dd></div>
             </dl>
@@ -114,7 +114,7 @@ export default async function DashboardPage() {
                     {a.icon === "message" ? <MessageCircle className="h-3.5 w-3.5" /> : <CalendarDays className="h-3.5 w-3.5" />}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-ilo-deep">Student #{a.alias} <span className="ml-1 text-[10px] font-semibold text-ilo-plum">{a.kind}</span></p>
+                    <p className="text-xs font-bold text-ilo-deep">{a.alias} <span className="ml-1 text-[10px] font-semibold text-ilo-plum">{a.kind}</span></p>
                     <p className="mt-0.5 break-words text-[11px] leading-snug text-ilo-ink/70">{a.text}</p>
                   </div>
                   <span className="shrink-0 text-[10px] text-ilo-ink/50">{ago(a.atMs, nowMs)}</span>
@@ -137,7 +137,7 @@ export default async function DashboardPage() {
                   <span className={`w-11 shrink-0 pt-0.5 text-xs font-bold ${s.state === "next" || s.state === "now" ? "text-ilo-plum" : "text-ilo-ink/70"}`}>{s.label}</span>
                   <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${s.state === "next" || s.state === "now" ? "bg-ilo-plum" : "bg-ilo-plum/30"}`} aria-hidden="true" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-ilo-deep">Student #{s.alias}</p>
+                    <p className="text-xs font-bold text-ilo-deep">{s.alias}</p>
                     <p className="text-[11px] text-ilo-ink/60">{s.type} · {MODE_LABEL[s.mode]}</p>
                   </div>
                   <span className="shrink-0 text-[10px] text-ilo-ink/50">45 min</span>

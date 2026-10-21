@@ -40,14 +40,17 @@ export const getWorkspace = cache(async () => {
         .order("created_at", { ascending: false })
         .limit(500)
     : { data: [] };
-
+  const { data: nameRows } = await supabase.rpc("counsellor_student_names");
+  const names: Record<string, string> = Object.fromEntries(
+    ((nameRows ?? []) as { student_id: string; full_name: string | null }[]).filter((r) => r.full_name).map((r) => [r.student_id, r.full_name as string]),
+  );
   const dash = buildDashboard({
     appts: (appts ?? []) as Appt[],
     convos: (convos ?? []) as Convo[],
     msgs: (msgs ?? []) as Msg[],
     availability: me.counsellor_availability ?? [],
     capacity: me.caseload_capacity ?? 25,
-    nowMs,
+    nowMs,names,
   });
 
   const initials = me.display_name
@@ -61,7 +64,7 @@ export const getWorkspace = cache(async () => {
   return {
     me: { id: me.id as string, fullName: me.display_name as string, shortName: shortName(me.display_name), initials },
     college: (inst?.name as string | undefined) ?? "your institution",
-    dash,
+    dash, names,
     nowMs,
   };
 });

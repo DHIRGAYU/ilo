@@ -30,9 +30,13 @@ export function LoginForm() {
       return;
     }
 
-    // Only counsellor accounts may use this sign-in
-    const { data: profile } = await supabase.from("profiles").select("role").maybeSingle();
-    if (profile?.role !== "counsellor") {
+    // Only accounts linked to a counsellor profile may use this sign-in. This is the same check the workspace
+    // itself uses, so a counsellor who can open the dashboard is never turned away here.
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: link } = user
+      ? await supabase.from("counsellors").select("id").eq("profile_id", user.id).maybeSingle()
+      : { data: null };
+    if (!link) {
       await supabase.auth.signOut({ scope: "local" });
       setError("This sign-in is for counsellors. Students sign in with their college Google account.");
       setBusy(false);
