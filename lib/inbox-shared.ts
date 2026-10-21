@@ -1,4 +1,6 @@
-import { dayLabel, timeLabel } from "@/lib/chat";
+import { dayLabel, randomUUID, timeLabel } from "@/lib/chat";
+
+export { randomUUID };
 
 // Types and small helpers shared by the inbox page (server) and its components (client).
 // Nothing here touches the database. All times are Indian Standard Time.

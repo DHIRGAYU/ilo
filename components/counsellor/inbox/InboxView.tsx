@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useRouter } from "next/navigation";
 import { MessageCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { matchesFilter, sortConvos, toMsg, type Filter, type InboxConvo, type MessageRow, type Msg } from "@/lib/inbox-shared";
+import { matchesFilter, randomUUID, sortConvos, toMsg, type Filter, type InboxConvo, type MessageRow, type Msg } from "@/lib/inbox-shared";
 import { ChatPane } from "./ChatPane";
 import { ContextPanel } from "./ContextPanel";
 import { ConversationList } from "./ConversationList";
@@ -183,7 +183,7 @@ export function InboxView({ convos: serverConvos, selectedId: initialSelected, i
     const id = selectedId;
     const body = (id ? drafts[id] ?? "" : "").trim();
     if (!id || !body) return;
-    const key = crypto.randomUUID();
+    const key = randomUUID();
     const at = Date.now();
     setCache((cur) => ({ ...cur, [id]: [...(cur[id] ?? []), { key, mine: true, body, at, status: "sending" }] }));
     setDrafts((d) => ({ ...d, [id]: "" }));

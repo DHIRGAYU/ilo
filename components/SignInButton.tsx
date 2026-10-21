@@ -7,10 +7,12 @@ import { createClient } from "@/lib/supabase/client";
 export function SignInButton({ initialError }: { initialError?: string }) {
   const handleSignIn = async () => {
     const supabase = createClient();
+    const redirectTo = `${window.location.origin}/auth/callback`;
+    console.log("[OAuth] Initiating Google sign-in with redirectTo:", redirectTo);
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo,
       },
     });
   };
