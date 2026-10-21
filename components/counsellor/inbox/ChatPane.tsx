@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, CheckCircle2, ChevronLeft, Lock, MoreHorizontal, PanelRight, Phone, Pin, RotateCcw, Send, ShieldAlert } from "lucide-react";
+import { Archive, CheckCircle2, ChevronLeft, Lock, MoreHorizontal, PanelRight, Phone, Pin, RotateCcw, Send, ShieldAlert, Video } from "lucide-react";
+import { useCall } from "@/components/call/CallProvider";
 import { dayKey, dayLabel, timeLabel } from "@/lib/chat";
 import { listTime, rowTag, type InboxConvo, type Msg } from "@/lib/inbox-shared";
 
@@ -26,6 +27,7 @@ type Props = {
 };
 
 export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry, onReload, onBack, onOpenContext, onFlags, nowMs }: Props) {
+  const { startCall, busy } = useCall();
   const scroller = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState(false);
   const [escalate, setEscalate] = useState(false);
@@ -74,6 +76,12 @@ export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry
             {tag && <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${tag.className}`}>{tag.label}</span>}
           </p>
         </div>
+        <button type="button" disabled={busy} onClick={() => startCall({ conversationId: convo.id, kind: "audio" })} className={`flex shrink-0 items-center gap-1.5 rounded-full border border-ilo-plum/20 bg-white px-3 py-2 text-[11px] font-bold text-ilo-plum hover:bg-ilo-blush/50 disabled:opacity-60 ${focus}`}>
+          <Phone className="h-3.5 w-3.5" aria-hidden="true" /> <span className="hidden sm:inline">Call</span><span className="sr-only sm:hidden">Audio call</span>
+        </button>
+        <button type="button" disabled={busy} onClick={() => startCall({ conversationId: convo.id, kind: "video" })} className={`flex shrink-0 items-center gap-1.5 rounded-full border border-ilo-plum/20 bg-white px-3 py-2 text-[11px] font-bold text-ilo-plum hover:bg-ilo-blush/50 disabled:opacity-60 ${focus}`}>
+          <Video className="h-3.5 w-3.5" aria-hidden="true" /> <span className="hidden sm:inline">Video</span><span className="sr-only sm:hidden">Video call</span>
+        </button>
         <button type="button" onClick={() => setEscalate(true)} className={`flex shrink-0 items-center gap-1.5 rounded-full border border-ilo-crisis/30 bg-white px-3 py-2 text-[11px] font-bold text-ilo-crisis hover:bg-ilo-crisis/5 ${focus}`}>
           <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" /> <span className="hidden sm:inline">Escalate</span><span className="sr-only sm:hidden">Escalate</span>
         </button>
