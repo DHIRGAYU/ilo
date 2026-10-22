@@ -1,11 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptBlob, decryptMessage, encryptBlob, encryptMessage, MAX_BODY_CHARS } from "./box";
-import { archiveKeyFrom, generateKeypair, publicFromSecret, unwrapSecretKey, wrapSecretKey, type KeyBackup } from "./keys";
+import { archiveKeyFrom, generateKeypair, publicFromSecret, unwrapSecretKey, wrapSecretKey, type KeyBackup, type Keypair } from "./keys";
 import { generateRecoveryCode } from "./recovery";
 import { fromB64, getSodium, toB64 } from "./sodium";
-import { Store, type Message } from "./store";
+import { Store, type Message, type Summary } from "./store";
 
-export type { Message, Status } from "./store";
+export type { Message, Status, Summary } from "./store";
 
 // What the app should show the person right now
 export type E2EEState =
@@ -36,6 +36,7 @@ export class E2EEClient {
   private listeners = new Set<(conversationId?: string) => void>();
   private collecting: Promise<void> | null = null;
   private backupTimer: ReturnType<typeof setTimeout> | null = null;
+  private pending: { kp: Keypair; code: string; rotate: boolean } | null = null;
   // Mail that could not be opened is reported here and left on the server rather than being acknowledged
   issues: { rowId: string; reason: string }[] = [];
 
@@ -76,20 +77,38 @@ export class E2EEClient {
     return data as { key_version: number; device_id: string };
   }
 
-  // First time: makes the keys and returns the recovery code. Show it once and make the person save it.
-  async setup(): Promise<string> {
-    if (this.state !== "needs_setup") throw new E2EEError("bad_state");
-    const s = await getSodium();
-    const kp = await generateKeypair();
-    const publicKey = toB64(s, kp.publicKey);
-    const deviceId = crypto.randomUUID();
-    const reg = await this.register(publicKey, deviceId); // refused with key_exists if another device got there first
+  // Step 1 of setup: make the keys and the recovery code, but save nothing yet.
+  // Works for a brand-new account, and also for "start fresh" when the recovery code was lost (that replaces the old key).
+  async beginSetup(): Promise<string> {
+    if (this.state !== "needs_setup" && this.state !== "needs_restore") throw new E2EEError("bad_state");
     const code = generateRecoveryCode();
-    await this.saveBackup(kp.secretKey, code, reg.key_version);
-    await this.store.putIdentity({ userId: this.userId, deviceId, publicKey, keyVersion: reg.key_version, sealedSecret: await this.store.seal(kp.secretKey) });
-    this.secretKey = kp.secretKey;
-    this.state = "ready";
+    this.pending = { kp: await generateKeypair(), code, rotate: this.state === "needs_restore" };
     return code;
+  }
+
+  // Step 2, after the person confirms they have kept the code: register the key, store the locked backup, keep the key here.
+  // If it fails part-way it is safe to call again.
+  async finishSetup(): Promise<void> {
+    const p = this.pending;
+    if (!p) throw new E2EEError("bad_state");
+    const s = await getSodium();
+    const publicKey = toB64(s, p.kp.publicKey);
+    const deviceId = crypto.randomUUID();
+    if (p.rotate) await this.eraseAllArchives(); // pieces locked with the old key can never be opened again
+    const reg = await this.register(publicKey, deviceId, p.rotate);
+    await this.saveBackup(p.kp.secretKey, p.code, reg.key_version);
+    await this.store.putIdentity({ userId: this.userId, deviceId, publicKey, keyVersion: reg.key_version, sealedSecret: await this.store.seal(p.kp.secretKey) });
+    this.secretKey = p.kp.secretKey;
+    this.pending = null;
+    this.state = "ready";
+  }
+
+  private async eraseAllArchives() {
+    const { data } = await this.supabase.from("history_chunks").select("conversation_id").eq("owner_id", this.userId);
+    for (const c of new Set((data ?? []).map((r: { conversation_id: string }) => r.conversation_id))) {
+      await this.supabase.rpc("clear_history", { p_conversation_id: c });
+      await this.store.setLastSeq(c, 0);
+    }
   }
 
   private async saveBackup(secretKey: Uint8Array, code: string, keyVersion: number) {
@@ -184,8 +203,10 @@ export class E2EEClient {
             p_conversation_id: m.conversationId, p_client_id: id, p_ciphertext: sealed.ciphertext, p_nonce: sealed.nonce, p_recipient_key_version: peer.version,
           });
           if (!error) {
-            const r = data as { created_at: string; delivered: boolean };
-            await this.store.updateStatus(true, id, r.delivered ? "delivered" : "sent", { at: Date.parse(r.created_at) });
+            const r = data as { id: string | null; created_at: string; delivered: boolean };
+            // No id means a receipt already exists: it was delivered, or it expired unread
+            const status = r.delivered ? "delivered" : r.id === null ? "expired" : "sent";
+            await this.store.updateStatus(true, id, status, { at: Date.parse(r.created_at) });
             return;
           }
           if (error.message.includes("stale_key") && attempt === 0) continue; // they changed key; fetch the new one and re-lock
@@ -283,6 +304,24 @@ export class E2EEClient {
   }
 
   messages(conversationId: string) { return this.store.list(conversationId); }
+  summaries(): Promise<Record<string, Summary>> { return this.store.summaries(); }
+
+  // Everything up to the newest message from the other person counts as read
+  async markRead(conversationId: string) {
+    const latest = Math.max(0, ...(await this.store.list(conversationId)).filter((m) => !m.mine).map((m) => m.at));
+    if (latest <= (await this.store.getReadAt(conversationId))) return;
+    await this.store.setReadAt(conversationId, latest);
+    this.emit(conversationId);
+  }
+
+  // For a message that expired unread: send it again as a new message
+  async resend(id: string) {
+    const m = await this.store.getMessage(true, id);
+    if (!m) return;
+    await this.send(m.conversationId, m.body);
+    await this.store.remove(true, id);
+    this.emit(m.conversationId);
+  }
 
   // ---------- Encrypted archive (how a new device gets history back) ----------
 
@@ -335,7 +374,9 @@ export class E2EEClient {
       if (error || !data || data.length === 0) break;
       for (const c of data) {
         maxSeq.set(c.conversation_id, Math.max(maxSeq.get(c.conversation_id) ?? 0, c.seq));
-        const items = JSON.parse(new TextDecoder().decode(await decryptBlob({ ciphertext: c.ciphertext, nonce: c.nonce }, key))) as ArchiveItem[];
+        let items: ArchiveItem[];
+        try { items = JSON.parse(new TextDecoder().decode(await decryptBlob({ ciphertext: c.ciphertext, nonce: c.nonce }, key))) as ArchiveItem[]; }
+        catch { continue; } // locked with a different key, so skip it
         for (const it of items) {
           if (!SAVEABLE.has(it.s)) continue;
           const added = await this.store.putMessage(

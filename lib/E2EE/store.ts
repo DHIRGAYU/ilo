@@ -12,6 +12,12 @@ export type Message = {
   status: Status;
   reason?: string;         // why a send failed, e.g. "recipient_no_key"
 };
+export type Summary = {
+  lastBody: string; lastMine: boolean; lastAt: number; lastStatus: Status; firstAt: number;
+  unread: number;        // messages from the other person that have not been read on this device
+  hasReceived: boolean;  // they have written at least once
+  hasMine: boolean;      // I have written at least once
+};
 type Sealed = { iv: Uint8Array; ct: Uint8Array };
 type Row = { key: string; id: string; conversationId: string; mine: boolean; at: number; status: Status; reason?: string; archived: 0 | 1; body: Sealed };
 export type Identity = { userId: string; deviceId: string; publicKey: string; keyVersion: number; sealedSecret: Sealed };
@@ -132,6 +138,32 @@ export class Store {
       if (r) { r.archived = 1; st.put(r); }
     }
     await done(tx);
+  }
+
+  async remove(mine: boolean, id: string) { const tx = this.msgs("readwrite"); tx.objectStore("messages").delete(keyOf(mine, id)); await done(tx); }
+
+  // "Read up to here" is the time of the newest message seen, using the sender's clock, so device clock differences never matter
+  async getReadAt(conversationId: string) { return ((await req(this.meta().objectStore("meta").get(`read:${conversationId}`))) as number | undefined) ?? 0; }
+  async setReadAt(conversationId: string, at: number) { const tx = this.meta("readwrite"); tx.objectStore("meta").put(at, `read:${conversationId}`); await done(tx); }
+
+  // Last message, unread count and so on for every conversation: what the inbox list and the badges are built from
+  async summaries(): Promise<Record<string, Summary>> {
+    const rows = (await req(this.msgs().objectStore("messages").getAll())) as Row[];
+    const by = new Map<string, Row[]>();
+    for (const r of rows) { const l = by.get(r.conversationId); if (l) l.push(r); else by.set(r.conversationId, [r]); }
+    const out: Record<string, Summary> = {};
+    for (const [conv, list] of by) {
+      const readAt = await this.getReadAt(conv);
+      let last = list[0], first = list[0].at, unread = 0, hasReceived = false, hasMine = false;
+      for (const r of list) {
+        if (r.at > last.at) last = r;
+        if (r.at < first) first = r.at;
+        if (r.mine) hasMine = true;
+        else { hasReceived = true; if (r.at > readAt) unread++; }
+      }
+      out[conv] = { lastBody: dec.decode(await this.open(last.body)), lastMine: last.mine, lastAt: last.at, lastStatus: last.status, firstAt: first, unread, hasReceived, hasMine };
+    }
+    return out;
   }
 
   async conversationIds(): Promise<string[]> {

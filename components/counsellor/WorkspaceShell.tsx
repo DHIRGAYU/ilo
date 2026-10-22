@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useE2EE } from "@/components/e2ee/E2EEProvider";
 import { Activity, Bell, BookOpen, CalendarDays, Home, HeartHandshake, Inbox, LogOut, Menu, Phone, Search, Settings, ShieldAlert, Users, X } from "lucide-react";
 
 const NAV = [
@@ -19,13 +20,13 @@ const NAV = [
 
 type Badges = { requests: number; inbox: number };
 
-function NavList({ badges, onNavigate }: { badges: Badges; onNavigate?: () => void }) {
+function NavList({ badges: serverBadges, onNavigate }: { badges: Badges; onNavigate?: () => void }) {
   const path = usePathname();
   return (
     <nav aria-label="Counsellor workspace" className="mt-3 space-y-1">
       {NAV.map(({ href, label, icon: Icon, badge }) => {
         const active = href === "/counsellor" ? path === href : path.startsWith(href);
-        const count = badge ? badges[badge] : 0;
+        const count = badge ? serverBadges[badge] : 0;
         return (
           <Link key={href} href={href} onClick={onNavigate} aria-current={active ? "page" : undefined}
             className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-ilo-plum ${active ? "bg-ilo-blush text-ilo-plum" : "text-ilo-ink hover:bg-ilo-blush/50"}`}>
@@ -48,10 +49,13 @@ function Brand() {
   );
 }
 
-export function WorkspaceShell({ fullName, initials, college, badges, children }: {
+export function WorkspaceShell({ fullName, initials, college, badges: serverBadges, children }: {
   fullName: string; initials: string; college: string; badges: Badges; children: React.ReactNode;
 }) {
   const path = usePathname();
+  const live = useE2EE();
+  const badges: Badges = live.state === "ready" ? { requests: live.triage, inbox: live.unreadTotal } : serverBadges;
+  const needsKey = (live.state === "needs_setup" || live.state === "needs_restore") && !path.startsWith("/counsellor/inbox");
   const [drawer, setDrawer] = useState(false);
   const [menu, setMenu] = useState(false);
   const [crisis, setCrisis] = useState(false);
@@ -121,7 +125,11 @@ export function WorkspaceShell({ fullName, initials, college, badges, children }
             )}
           </div>
         </header>
-
+        {needsKey && (
+          <Link href="/counsellor/inbox" className="block bg-ilo-deep px-4 py-2 text-center text-xs font-semibold text-white">
+            Turn on secure messaging so students can reach you. It takes a minute.
+          </Link>
+        )}
         {children}
       </div>
 

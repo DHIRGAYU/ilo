@@ -1,11 +1,14 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, Lock, RotateCcw, Send, ShieldCheck, Video } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { E2EEGate } from "@/components/e2ee/E2EEGate";
+import { E2EEProvider, useE2EE } from "@/components/e2ee/E2EEProvider";
 import { presenceLabel, type AvailSlot } from "@/lib/booking";
 import { dayKey, dayLabel, timeLabel } from "@/lib/chat";
+import { fromStore, type Msg } from "@/lib/inbox-shared";
 import { shortName } from "@/lib/sessions";
 
 export type ChatCounsellor = {
@@ -14,21 +17,25 @@ export type ChatCounsellor = {
   designation: string | null;
   counsellor_availability: AvailSlot[] | null;
 };
-export type MessageRow = { id: string; sender_role: "student" | "counsellor"; body: string; created_at: string; client_id: string | null };
-type Msg = { key: string; mine: boolean; body: string; at: number; status: "sent" | "sending" | "failed" };
-
-const toMsg = (r: MessageRow): Msg => ({
-  key: r.client_id ?? r.id,
-  mine: r.sender_role === "student",
-  body: r.body,
-  at: Date.parse(r.created_at),
-  status: "sent",
-});
 
 // Wording is deliberately limited to what Ilo can guarantee today (see README note on end-to-end encryption)
 const EMERGENCY = "Counsellors reply during campus hours. In an emergency call Tele-MANAS 14416, free, 24×7.";
 
-export function ChatView({ counsellor, conversationId, initial, nowMs }: { counsellor: ChatCounsellor; conversationId: string | null; initial: MessageRow[]; nowMs: number }) {
+type Props = { counsellor: ChatCounsellor; conversationId: string | null; nowMs: number; userId: string };
+
+export function ChatView(props: Props) {
+  return (
+    <E2EEProvider userId={props.userId}>
+      <E2EEGate audience="student" backHref="/home">
+        <ChatInner {...props} />
+      </E2EEGate>
+    </E2EEProvider>
+  );
+}
+
+function ChatInner({ counsellor, conversationId, nowMs }: Props) {
+  const supabase = useMemo(() => createClient(), []);
+  const { client, summaries, rev } = useE2EE();
   const short = shortName(counsellor.display_name);
   const initials = counsellor.display_name
     .split(" ")
@@ -39,72 +46,52 @@ export function ChatView({ counsellor, conversationId, initial, nowMs }: { couns
     .toUpperCase();
 
   const [convId, setConvId] = useState(conversationId);
-  const [msgs, setMsgs] = useState<Msg[]>(() => initial.map(toMsg));
+  const [msgs, setMsgs] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
 
-  // Keep the newest message in view
+  // Messages come from this device and refresh whenever anything changes (new mail, receipts, sending)
+  useEffect(() => {
+    if (!client || !convId) { setMsgs([]); return; }
+    let live = true;
+    client.messages(convId).then((list) => { if (live) setMsgs(list.map(fromStore)); });
+    return () => { live = false; };
+  }, [client, convId, rev]);
+
   useEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [msgs.length]);
 
-  // New messages from the counsellor arrive live
+  // Anything the counsellor wrote counts as read while this screen is open
+  const unread = convId ? summaries[convId]?.unread ?? 0 : 0;
   useEffect(() => {
-    if (!convId) return;
-    const supabase = createClient();
-    const channel = supabase
-      .channel(`chat-${convId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` }, (p) => {
-        const m = toMsg(p.new as MessageRow);
-        setMsgs((cur) => (cur.some((x) => x.key === m.key) ? cur.map((x) => (x.key === m.key ? { ...x, ...m } : x)) : [...cur, m]));
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [convId]);
+    if (client && convId && unread > 0 && document.visibilityState === "visible") void client.markRead(convId);
+  }, [client, convId, unread]);
 
-  // Catch up when the student returns to the tab
-  const refetch = useCallback(async () => {
-    if (!convId) return;
-    const { data } = await createClient()
-      .from("messages")
-      .select("id, sender_role, body, created_at, client_id")
-      .eq("conversation_id", convId)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (!data) return;
-    const server = (data as MessageRow[]).reverse().map(toMsg);
-    setMsgs((cur) => [...server, ...cur.filter((m) => m.status !== "sent" && !server.some((s) => s.key === m.key))]);
-  }, [convId]);
-  useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible") refetch(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [refetch]);
-
-  async function deliver(key: string, body: string) {
-    const { data, error } = await createClient().rpc("send_message", { p_counsellor_id: counsellor.id, p_body: body, p_client_id: key });
-    if (error) {
-      setMsgs((cur) => cur.map((m) => (m.key === key ? { ...m, status: "failed" } : m)));
-      return;
-    }
-    const r = data as { conversation_id: string; created_at: string };
-    setConvId(r.conversation_id);
-    setMsgs((cur) => cur.map((m) => (m.key === key ? { ...m, at: Date.parse(r.created_at), status: "sent" } : m)));
-  }
-
-  function send() {
+  async function send() {
     const body = draft.trim();
-    if (!body) return;
-    const key = crypto.randomUUID();
-    setMsgs((cur) => [...cur, { key, mine: true, body, at: Date.now(), status: "sending" }]);
+    if (!body || !client) return;
+    setNotice(null);
+    let id = convId;
+    if (!id) {
+      // The conversation is created on the first message
+      const { data, error } = await supabase.rpc("start_conversation", { p_counsellor_id: counsellor.id });
+      if (error || !data) { setNotice("Couldn't start the chat. Please try again."); return; }
+      id = data as string;
+      setConvId(id);
+    }
     setDraft("");
-    deliver(key, body);
+    client.send(id, body).catch(() => { setDraft(body); setNotice("Couldn't send that message. Please try again."); });
   }
 
-  function retry(m: Msg) {
-    setMsgs((cur) => cur.map((x) => (x.key === m.key ? { ...x, status: "sending" } : x)));
-    deliver(m.key, m.body);
+  function failText(reason?: string) {
+    switch (reason) {
+      case "recipient_no_key": return `${short} hasn't turned on secure messaging yet`;
+      case "mailbox_full": return `${short}'s inbox is full right now`;
+      default: return "Not sent";
+    }
   }
 
   const canSend = draft.trim().length > 0;
@@ -148,13 +135,19 @@ export function ChatView({ counsellor, conversationId, initial, nowMs }: { couns
                 <div className={`flex flex-col ${m.mine ? "items-end" : "items-start"}`}>
                   <p className={`max-w-[80%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-xs leading-relaxed ${
                     m.mine ? "rounded-br-md bg-ilo-plum text-white" : "rounded-bl-md border border-ilo-plum/10 bg-white text-ilo-ink"
-                  } ${m.status === "sending" ? "opacity-60" : ""}`}>{m.body}</p>
+                  } ${m.status === "sending" || m.status === "queued" ? "opacity-60" : ""}`}>{m.body}</p>
                   {m.status === "failed" ? (
-                    <button type="button" onClick={() => retry(m)} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-ilo-crisis">
-                      <RotateCcw className="h-3 w-3" /> Not sent. Tap to retry
+                    <button type="button" onClick={() => void client?.retry(m.id)} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-ilo-crisis">
+                      <RotateCcw className="h-3 w-3" /> {failText(m.reason)}. Tap to retry
+                    </button>
+                  ) : m.status === "expired" ? (
+                    <button type="button" onClick={() => void client?.resend(m.id)} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-ilo-crisis">
+                      <RotateCcw className="h-3 w-3" /> Not delivered. Tap to send again
                     </button>
                   ) : (
-                    <span className="mt-0.5 text-[9px] text-ilo-ink/50">{m.status === "sending" ? "Sending…" : timeLabel(m.at)}</span>
+                    <span className="mt-0.5 text-[9px] text-ilo-ink/50">
+                      {m.status === "sending" || m.status === "queued" ? "Sending…" : `${timeLabel(m.at)}${m.mine ? (m.status === "delivered" ? " · Delivered" : " · Sent") : ""}`}
+                    </span>
                   )}
                 </div>
               </Fragment>
@@ -164,12 +157,13 @@ export function ChatView({ counsellor, conversationId, initial, nowMs }: { couns
       </div>
 
       <div className="border-t border-ilo-plum/10 bg-white/95 px-3 pb-3 pt-2.5">
+        {notice && <p role="alert" className="mb-2 text-center text-[10px] font-semibold text-ilo-crisis">{notice}</p>}
         <div className="flex items-end gap-2">
           <textarea
             aria-label={`Write a message to ${short}`}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
             rows={1}
             maxLength={2000}
             placeholder={`Write a message to ${short}…`}
@@ -177,7 +171,7 @@ export function ChatView({ counsellor, conversationId, initial, nowMs }: { couns
           />
           <button
             type="button"
-            onClick={send}
+            onClick={() => void send()}
             disabled={!canSend}
             aria-label="Send message"
             className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ilo-plum ${canSend ? "bg-ilo-plum" : "bg-ilo-plum/40"}`}

@@ -1,7 +1,9 @@
 import { cache } from "react";
-import { buildDashboard, type Appt, type Convo, type Msg } from "@/lib/counsellor-day";
+import { buildDashboard, studentLabel, type Appt, type Convo, type Msg } from "@/lib/counsellor-day";
 import { shortName } from "@/lib/sessions";
 import { createClient } from "@/lib/supabase/server";
+
+
 
 // Loads the signed-in counsellor and everything the workspace needs, once per request.
 // Row-level security means a counsellor only ever receives their own appointments and conversations.
@@ -30,16 +32,6 @@ export const getWorkspace = cache(async () => {
     supabase.from("conversations").select("id, student_id, counsellor_last_read_at").eq("counsellor_id", me.id),
   ]);
 
-  const ids = (convos ?? []).map((c) => c.id as string);
-  const { data: msgs } = ids.length
-    ? await supabase
-        .from("messages")
-        .select("conversation_id, sender_role, body, created_at")
-        .in("conversation_id", ids)
-        .gte("created_at", new Date(nowMs - 60 * 86_400_000).toISOString())
-        .order("created_at", { ascending: false })
-        .limit(500)
-    : { data: [] };
   const { data: nameRows } = await supabase.rpc("counsellor_student_names");
   const names: Record<string, string> = Object.fromEntries(
     ((nameRows ?? []) as { student_id: string; full_name: string | null }[]).filter((r) => r.full_name).map((r) => [r.student_id, r.full_name as string]),
@@ -47,10 +39,11 @@ export const getWorkspace = cache(async () => {
   const dash = buildDashboard({
     appts: (appts ?? []) as Appt[],
     convos: (convos ?? []) as Convo[],
-    msgs: (msgs ?? []) as Msg[],
+    msgs: [] as Msg[],
     availability: me.counsellor_availability ?? [],
     capacity: me.caseload_capacity ?? 25,
-    nowMs,names,
+    nowMs, names,
+
   });
 
   const initials = me.display_name
@@ -64,7 +57,9 @@ export const getWorkspace = cache(async () => {
   return {
     me: { id: me.id as string, fullName: me.display_name as string, shortName: shortName(me.display_name), initials },
     college: (inst?.name as string | undefined) ?? "your institution",
-    dash, names,
+    userId: user.id,
+    dash,
+    labels: Object.fromEntries((convos ?? []).map((c:any) => [c.id as string, studentLabel(c.student_id as string, names)])) as Record<string, string>, names,
     nowMs,
   };
 });
