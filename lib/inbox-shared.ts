@@ -1,4 +1,5 @@
 import { dayLabel, timeLabel } from "@/lib/chat";
+import type { Message, Status } from "@/lib/e2ee";
 
 // Types and small helpers shared by the inbox page (server) and its components (client).
 // Nothing here touches the database. All times are Indian Standard Time.
@@ -9,15 +10,14 @@ const wdF = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" })
 const whenF = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short", day: "numeric", month: "short" });
 
 export type Role = "student" | "counsellor";
-export type MessageRow = { id: string; sender_role: Role; body: string; created_at: string; client_id: string | null };
-export type Msg = { key: string; mine: boolean; body: string; at: number; status: "sent" | "sending" | "failed" };
+export type Msg = { id: string; key: string; mine: boolean; body: string; at: number; status: Status; reason?: string };
 export type InboxEvent = { id: string; at: number; text: string };
 export type NextSession = { startMs: number; endMs: number; mode: "in_person" | "video" | "phone" };
 
-// One conversation as the counsellor sees it. The student's id and name never reach the browser, only the alias.
+// One conversation as the counsellor sees it. The student's id never reaches the browser, only the display name.
 export type InboxConvo = {
   id: string;
-  alias: string;
+  alias: string; // the student's name, or "Student #A-2041" if no name is available
   initial: string;
   lastBody: string;
   lastRole: Role | null;
@@ -44,13 +44,17 @@ export const FILTERS: { id: Filter; label: string }[] = [
   { id: "archived", label: "Archived" },
 ];
 
-export const toMsg = (r: MessageRow): Msg => ({
-  key: r.client_id ?? r.id,
-  mine: r.sender_role === "counsellor",
-  body: r.body,
-  at: Date.parse(r.created_at),
-  status: "sent",
-});
+// A message from this device's own store. "mine" here means sent by the counsellor.
+export const fromStore = (m: Message): Msg => ({ id: m.id, key: `${m.mine ? "m" : "r"}-${m.id}`, mine: m.mine, body: m.body, at: m.at, status: m.status, reason: m.reason });
+
+export function failText(reason?: string) {
+  switch (reason) {
+    case "recipient_no_key": return "They haven't turned on secure messaging yet";
+    case "recipient_unavailable": return "They can't receive messages yet";
+    case "mailbox_full": return "Their inbox is full right now";
+    default: return "Not sent";
+  }
+}
 
 export function matchesFilter(c: InboxConvo, f: Filter) {
   if (f === "archived") return c.archived;

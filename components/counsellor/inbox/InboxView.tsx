@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useRouter } from "next/navigation";
 import { MessageCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { matchesFilter, sortConvos, toMsg, type Filter, type InboxConvo, type MessageRow, type Msg } from "@/lib/inbox-shared";
+import { E2EEGate } from "@/components/e2ee/E2EEGate";
+import { useE2EE } from "@/components/e2ee/E2EEProvider";
+import { fromStore, matchesFilter, sortConvos, type Filter, type InboxConvo, type Msg } from "@/lib/inbox-shared";
 import { ChatPane } from "./ChatPane";
 import { ContextPanel } from "./ContextPanel";
 import { ConversationList } from "./ConversationList";
@@ -21,46 +23,61 @@ function useMediaQuery(query: string) {
   return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches, () => false);
 }
 
-type Props = { convos: InboxConvo[]; selectedId: string | null; initialMessages: MessageRow[]; nowMs: number; setupNeeded: boolean };
+type Props = { convos: InboxConvo[]; selectedId: string | null; nowMs: number; setupNeeded: boolean };
 
-export function InboxView({ convos: serverConvos, selectedId: initialSelected, initialMessages, nowMs, setupNeeded }: Props) {
+export function InboxView(props: Props) {
+  return (
+    <E2EEGate audience="counsellor">
+      <InboxInner {...props} />
+    </E2EEGate>
+  );
+}
+
+function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, setupNeeded }: Props) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  const { client, summaries, rev } = useE2EE();
   const lgUp = useMediaQuery("(min-width: 1024px)");
   const xlUp = useMediaQuery("(min-width: 1280px)");
 
-  const [convos, setConvos] = useState(serverConvos);
+  // Flags and notes come from the server; the message details (last message, unread...) come from this device
+  const [local, setLocal] = useState(serverConvos);
   const [selectedId, setSelectedId] = useState<string | null>(initialSelected);
   const [view, setView] = useState<"list" | "chat">(initialSelected ? "chat" : "list");
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
-  const [cache, setCache] = useState<Record<string, Msg[]>>(() => (initialSelected ? { [initialSelected]: initialMessages.map(toMsg) } : {}));
-  const [loading, setLoading] = useState(false);
-  const [tries, setTries] = useState(0);
+  const [msgs, setMsgs] = useState<Msg[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [ctxOpen, setCtxOpen] = useState(false);
   const [now, setNow] = useState(nowMs);
   const [flash, setFlash] = useState<string | null>(null);
 
-  // Latest values for realtime callbacks, which outlive a single render
-  const convosRef = useRef(convos);
-  const selectedRef = useRef(selectedId);
-  const visibleRef = useRef(false);
-  const cacheRef = useRef(cache);
+  const localRef = useRef(local);
+  useEffect(() => { localRef.current = local; });
   const chatVisible = lgUp || view === "chat";
-  useEffect(() => { convosRef.current = convos; selectedRef.current = selectedId; visibleRef.current = chatVisible; cacheRef.current = cache; });
 
-  // After router.refresh() the server sends fresh rows, which replace what is on screen
   const firstRender = useRef(true);
   useEffect(() => {
     if (firstRender.current) { firstRender.current = false; return; }
-    setConvos(serverConvos);
+    setLocal(serverConvos);
   }, [serverConvos]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  const convos = useMemo<InboxConvo[]>(() => local.map((c) => {
+    const s = summaries[c.id];
+    return s ? { ...c, lastBody: s.lastBody, lastRole: s.lastMine ? "counsellor" : "student", lastAt: s.lastAt, firstAt: s.firstAt, unread: s.unread, everReplied: s.hasMine } : c;
+  }), [local, summaries]);
+
+  // A student wrote for the first time and this page does not know the conversation yet: reload the list once
+  const asked = useRef(new Set<string>());
+  useEffect(() => {
+    const unknown = Object.keys(summaries).filter((id) => !local.some((c) => c.id === id) && !asked.current.has(id));
+    if (unknown.length) { unknown.forEach((id) => asked.current.add(id)); router.refresh(); }
+  }, [summaries, local, router]);
 
   const select = useCallback((id: string) => {
     setSelectedId(id);
@@ -85,123 +102,34 @@ export function InboxView({ convos: serverConvos, selectedId: initialSelected, i
     if (lgUp && !selectedId && visible[0]) select(visible[0].id);
   }, [lgUp, selectedId, visible, select]);
 
-  const fetchMessages = useCallback(async (id: string) => {
-    const { data, error } = await supabase
-      .from("messages")
-      .select("id, sender_role, body, created_at, client_id")
-      .eq("conversation_id", id)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (error || !data) return null;
-    return (data as MessageRow[]).reverse().map(toMsg);
-  }, [supabase]);
-
-  // Load history the first time a conversation is opened
+  // The open conversation's messages come from this device and refresh whenever anything changes
   useEffect(() => {
-    if (!selectedId || cacheRef.current[selectedId]) return;
+    if (!client || !selectedId) { setMsgs([]); return; }
     let live = true;
-    setLoading(true);
-    fetchMessages(selectedId).then((list) => {
-      if (!live) return;
-      setLoading(false);
-      if (list) setCache((c) => ({ ...c, [selectedId]: list }));
-    });
+    client.messages(selectedId).then((list) => { if (live) setMsgs(list.map(fromStore)); });
     return () => { live = false; };
-  }, [selectedId, fetchMessages, tries]);
+  }, [client, selectedId, rev]);
 
-  const markRead = useCallback(async (id: string) => {
-    const c = convosRef.current.find((x) => x.id === id);
-    if (!c || c.unread === 0) return;
-    setConvos((cur) => cur.map((x) => (x.id === id ? { ...x, unread: 0 } : x)));
-    const { error } = await supabase.rpc("mark_conversation_read", { p_conversation_id: id });
-    if (!error) router.refresh(); // keeps the sidebar badge in step
-  }, [supabase, router]);
-
+  // Opening a conversation marks it read
+  const unreadHere = selectedId ? summaries[selectedId]?.unread ?? 0 : 0;
   useEffect(() => {
-    if (selectedId && chatVisible) void markRead(selectedId);
-  }, [selectedId, chatVisible, markRead]);
-
-  // New messages arrive live
-  useEffect(() => {
-    const channel = supabase
-      .channel("counsellor-inbox")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (p) => {
-        const r = p.new as MessageRow & { conversation_id: string };
-        const id = r.conversation_id;
-        if (!convosRef.current.some((c) => c.id === id)) { router.refresh(); return; }
-        const m = toMsg(r);
-        setCache((cur) => {
-          const list = cur[id];
-          if (!list) return cur;
-          return { ...cur, [id]: list.some((x) => x.key === m.key) ? list.map((x) => (x.key === m.key ? { ...x, ...m } : x)) : [...list, m] };
-        });
-        const watching = selectedRef.current === id && visibleRef.current && document.visibilityState === "visible";
-        const fromStudent = r.sender_role === "student";
-        setConvos((cur) => cur.map((c) => c.id !== id ? c : {
-          ...c,
-          lastBody: r.body, lastRole: r.sender_role, lastAt: Math.max(c.lastAt, m.at),
-          everReplied: c.everReplied || !fromStudent,
-          unread: fromStudent && !watching ? c.unread + 1 : c.unread,
-        }));
-        if (fromStudent && watching) void supabase.rpc("mark_conversation_read", { p_conversation_id: id });
-      })
-      .subscribe();
-    return () => { void supabase.removeChannel(channel); };
-  }, [supabase, router]);
-
-  // Catch up when the counsellor returns to the tab
-  useEffect(() => {
-    const onVisible = async () => {
-      if (document.visibilityState !== "visible") return;
-      router.refresh();
-      const id = selectedRef.current;
-      if (!id) return;
-      const server = await fetchMessages(id);
-      if (!server) return;
-      setCache((cur) => ({ ...cur, [id]: [...server, ...(cur[id] ?? []).filter((m) => m.status !== "sent" && !server.some((s) => s.key === m.key))] }));
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [fetchMessages, router]);
+    if (client && selectedId && chatVisible && unreadHere > 0 && document.visibilityState === "visible") void client.markRead(selectedId);
+  }, [client, selectedId, chatVisible, unreadHere]);
 
   const showFlash = (t: string) => { setFlash(t); setTimeout(() => setFlash(null), 8000); };
-
-  async function deliver(id: string, key: string, body: string) {
-    const { data, error } = await supabase.rpc("counsellor_send_message", { p_conversation_id: id, p_body: body, p_client_id: key });
-    const patch = (fn: (m: Msg) => Msg) => setCache((cur) => ({ ...cur, [id]: (cur[id] ?? []).map((m) => (m.key === key ? fn(m) : m)) }));
-    if (error) {
-      console.error(`counsellor_send_message failed: ${error.message} | code ${error.code} | ${error.details ?? ""} | ${error.hint ?? ""}`);
-      patch((m) => ({ ...m, status: "failed" }));
-      showFlash(`Couldn't send: ${error.message}`);
-      return;
-    }
-    const r = data as { created_at: string };
-    patch((m) => ({ ...m, at: Date.parse(r.created_at), status: "sent" }));
-  }
 
   function send() {
     const id = selectedId;
     const body = (id ? drafts[id] ?? "" : "").trim();
-    if (!id || !body) return;
-    const key = crypto.randomUUID();
-    const at = Date.now();
-    setCache((cur) => ({ ...cur, [id]: [...(cur[id] ?? []), { key, mine: true, body, at, status: "sending" }] }));
+    if (!client || !id || !body) return;
     setDrafts((d) => ({ ...d, [id]: "" }));
-    setConvos((cur) => cur.map((c) => (c.id === id ? { ...c, lastBody: body, lastRole: "counsellor", lastAt: at, everReplied: true, unread: 0 } : c)));
-    void deliver(id, key, body);
-  }
-
-  function retry(m: Msg) {
-    if (!selectedId) return;
-    const id = selectedId;
-    setCache((cur) => ({ ...cur, [id]: (cur[id] ?? []).map((x) => (x.key === m.key ? { ...x, status: "sending" } : x)) }));
-    void deliver(id, m.key, m.body);
+    client.send(id, body).catch(() => { setDrafts((d) => ({ ...d, [id]: body })); showFlash("Couldn't send that message."); });
   }
 
   async function setFlags(id: string, patch: Flags) {
-    const prev = convosRef.current.find((c) => c.id === id);
+    const prev = localRef.current.find((c) => c.id === id);
     if (!prev) return;
-    setConvos((cur) => cur.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    setLocal((cur) => cur.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     const { error } = await supabase.rpc("set_conversation_flags", {
       p_conversation_id: id,
       p_pinned: patch.pinned ?? null,
@@ -210,8 +138,8 @@ export function InboxView({ convos: serverConvos, selectedId: initialSelected, i
       p_resolved: patch.resolved ?? null,
     });
     if (error) {
-      setConvos((cur) => cur.map((c) => (c.id === id ? { ...c, pinned: prev.pinned, urgent: prev.urgent, archived: prev.archived, resolved: prev.resolved } : c)));
       console.error("set_conversation_flags failed", error);
+      setLocal((cur) => cur.map((c) => (c.id === id ? { ...c, pinned: prev.pinned, urgent: prev.urgent, archived: prev.archived, resolved: prev.resolved } : c)));
       showFlash(`Couldn't save that change: ${error.message}`);
     }
   }
@@ -219,7 +147,7 @@ export function InboxView({ convos: serverConvos, selectedId: initialSelected, i
   const saveNote = useCallback(async (id: string, text: string) => {
     const { error } = await supabase.rpc("save_conversation_note", { p_conversation_id: id, p_note: text });
     if (error) return false;
-    setConvos((cur) => cur.map((c) => (c.id === id ? { ...c, note: text } : c)));
+    setLocal((cur) => cur.map((c) => (c.id === id ? { ...c, note: text } : c)));
     return true;
   }, [supabase]);
 
@@ -230,7 +158,7 @@ export function InboxView({ convos: serverConvos, selectedId: initialSelected, i
     <main className="flex h-[calc(100dvh-3.5rem)] min-h-0 gap-3 p-3 lg:gap-4 lg:p-4 xl:p-5">
       {(setupNeeded || flash) && (
         <p role="status" className="fixed left-1/2 top-16 z-30 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-xl bg-ilo-deep px-4 py-2.5 text-center text-xs text-white shadow-lg">
-          {flash ?? "Inbox actions need the 0010_counsellor_inbox.sql database update. You can read messages, but not reply yet."}
+          {flash ?? "Flags and notes need the 0010_counsellor_inbox.sql database update. Messages still work."}
         </p>
       )}
 
@@ -255,13 +183,13 @@ export function InboxView({ convos: serverConvos, selectedId: initialSelected, i
           <ChatPane
             key={current.id}
             convo={current}
-            msgs={cache[current.id] ?? []}
-            loading={loading}
+            msgs={msgs}
+            loading={false}
             draft={drafts[current.id] ?? ""}
             onDraft={(v) => setDrafts((d) => ({ ...d, [current.id]: v }))}
             onSend={send}
-            onRetry={retry}
-            onReload={() => setTries((t) => t + 1)}
+            onRetry={(m) => void client?.retry(m.id)}
+            onResend={(m) => void client?.resend(m.id)}
             onBack={back}
             onOpenContext={() => setCtxOpen(true)}
             onFlags={(patch) => void setFlags(current.id, patch)}

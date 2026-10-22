@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, CheckCircle2, ChevronLeft, Lock, MoreHorizontal, PanelRight, Phone, Pin, RotateCcw, Send, ShieldAlert, Video } from "lucide-react";
 import { useCall } from "@/components/call/CallProvider";
 import { dayKey, dayLabel, timeLabel } from "@/lib/chat";
-import { listTime, rowTag, type InboxConvo, type Msg } from "@/lib/inbox-shared";
+import { failText, listTime, rowTag, type InboxConvo, type Msg } from "@/lib/inbox-shared";
 
 const focus = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ilo-plum";
 const QUICK = ["I hear you", "One step at a time", "Let's find a time"];
@@ -19,20 +19,19 @@ type Props = {
   onDraft: (v: string) => void;
   onSend: () => void;
   onRetry: (m: Msg) => void;
-  onReload: () => void;
+  onResend: (m: Msg) => void;
   onBack: () => void;
   onOpenContext: () => void;
   onFlags: (patch: Flags) => void;
   nowMs: number;
 };
 
-export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry, onReload, onBack, onOpenContext, onFlags, nowMs }: Props) {
+export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry, onResend, onBack, onOpenContext, onFlags, nowMs }: Props) {
   const { startCall, busy } = useCall();
   const scroller = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState(false);
   const [escalate, setEscalate] = useState(false);
   const escClose = useRef<HTMLButtonElement>(null);
-
   const items = useMemo<Item[]>(() => {
     // Only show booking events from the point the loaded history begins
     const floor = msgs.length >= 200 ? msgs[0].at : 0;
@@ -67,7 +66,7 @@ export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry
         </button>
         <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-ilo-blush font-display text-base text-ilo-plum">{convo.initial}</span>
         <div className="min-w-0 flex-1">
-            <h2 className="truncate font-display text-lg leading-tight text-ilo-deep">{convo.alias}</h2>
+          <h2 className="truncate font-display text-lg leading-tight text-ilo-deep">{convo.alias}</h2>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ilo-ink/70">
             <span className="flex items-center gap-1">
               <span className={`h-1.5 w-1.5 rounded-full ${recent ? "bg-emerald-600" : "bg-ilo-ink/30"}`} aria-hidden="true" />
@@ -120,10 +119,7 @@ export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry
         {loading && msgs.length === 0 ? (
           <p className="py-10 text-center text-xs text-ilo-ink/70">Loading messages…</p>
         ) : items.length === 0 ? (
-          <div className="py-10 text-center text-xs text-ilo-ink/70">
-            <p>No messages to show.</p>
-            <button type="button" onClick={onReload} className={`mt-2 font-bold text-ilo-plum underline ${focus}`}>Try again</button>
-          </div>
+          <p className="py-10 text-center text-xs text-ilo-ink/70">No messages yet. Say hello whenever you&apos;re ready.</p>
         ) : (
           <div className="space-y-2">
             {items.map((it, i) => (
@@ -137,13 +133,19 @@ export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry
                   <div className={`flex flex-col ${it.m.mine ? "items-end" : "items-start"}`}>
                     <p className={`max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-xs leading-relaxed sm:max-w-[75%] ${
                       it.m.mine ? "rounded-br-md bg-ilo-plum text-white" : "rounded-bl-md bg-ilo-blush/70 text-ilo-deep"
-                    } ${it.m.status === "sending" ? "opacity-60" : ""}`}>{it.m.body}</p>
+                    } ${it.m.status === "sending" || it.m.status === "queued" ? "opacity-60" : ""}`}>{it.m.body}</p>
                     {it.m.status === "failed" ? (
                       <button type="button" onClick={() => onRetry(it.m)} className={`mt-1 flex items-center gap-1 text-[10px] font-semibold text-ilo-crisis ${focus}`}>
-                        <RotateCcw className="h-3 w-3" /> Not sent. Tap to retry
+                        <RotateCcw className="h-3 w-3" /> {failText(it.m.reason)}. Tap to retry
+                      </button>
+                    ) : it.m.status === "expired" ? (
+                      <button type="button" onClick={() => onResend(it.m)} className={`mt-1 flex items-center gap-1 text-[10px] font-semibold text-ilo-crisis ${focus}`}>
+                        <RotateCcw className="h-3 w-3" /> Not delivered. Tap to send again
                       </button>
                     ) : (
-                      <span className="mt-0.5 text-[10px] text-ilo-ink/60">{it.m.status === "sending" ? "Sending…" : timeLabel(it.m.at)}</span>
+                      <span className="mt-0.5 text-[10px] text-ilo-ink/60">
+                        {it.m.status === "sending" || it.m.status === "queued" ? "Sending…" : `${timeLabel(it.m.at)}${it.m.mine ? (it.m.status === "delivered" ? " · Delivered" : " · Sent") : ""}`}
+                      </span>
                     )}
                   </div>
                 )}
@@ -157,7 +159,7 @@ export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry
       <div className="border-t border-ilo-plum/10 px-3 pb-16 pt-3 sm:px-4 xl:pb-3">
         <div className="mb-2 flex flex-wrap gap-1.5">
           {QUICK.map((q) => (
-            <button key={q} type="button" onClick={() => onDraft(draft ? `${draft.replace(/\s+$/, "")} ${q}` : q)} className={`rounded-full border border-ilo-plum/15 bg-white px-3 py-1 text-[11px] text-ilo-plum hover:bg-ilo-blush/50 ${focus}`}>
+            <button key={q} type="button" onClick={() => onDraft(draft.includes(q) ? draft : draft ? `${draft.trimEnd()} ${q}` : q)} className={`rounded-full border border-ilo-plum/15 bg-white px-3 py-1 text-[11px] text-ilo-plum hover:bg-ilo-blush/50 ${focus}`}>
               {q}
             </button>
           ))}

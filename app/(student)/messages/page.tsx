@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ChatView, type ChatCounsellor, type MessageRow } from "@/components/chat/ChatView";
+import { redirect } from "next/navigation";
+import { ChatView, type ChatCounsellor } from "@/components/chat/ChatView";
 import { getMyCounsellor } from "@/lib/counsellors";
 import { createClient } from "@/lib/supabase/server";
 
@@ -26,17 +27,10 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
     );
   }
 
+  // Message text is locked end to end and lives on the device, so only the conversation id is looked up here
   const { data: conv } = await supabase.from("conversations").select("id").eq("counsellor_id", counsellor.id).maybeSingle();
-  let initial: MessageRow[] = [];
-  if (conv) {
-    const { data } = await supabase
-      .from("messages")
-      .select("id, sender_role, body, created_at, client_id")
-      .eq("conversation_id", conv.id)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    initial = ((data ?? []) as MessageRow[]).reverse();
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
 
-  return <ChatView counsellor={counsellor} conversationId={conv?.id ?? null} initial={initial} nowMs={Date.now()} />;
+  return <ChatView counsellor={counsellor} conversationId={conv?.id ?? null} nowMs={Date.now()} userId={user.id} />;
 }
