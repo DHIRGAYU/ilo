@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Lock, RotateCcw, Send, ShieldCheck, Video } from "lucide-react";
+import { ChevronLeft, Lock, Phone, RotateCcw, Send, ShieldCheck, Video } from "lucide-react";
+import { useCall } from "@/components/call/CallProvider";
 import { createClient } from "@/lib/supabase/client";
 import { E2EEGate } from "@/components/e2ee/E2EEGate";
 import { E2EEProvider, useE2EE } from "@/components/e2ee/E2EEProvider";
@@ -36,7 +37,9 @@ export function ChatView(props: Props) {
 function ChatInner({ counsellor, conversationId, nowMs }: Props) {
   const supabase = useMemo(() => createClient(), []);
   const { client, summaries, rev } = useE2EE();
+  const { startCall, busy } = useCall();
   const short = shortName(counsellor.display_name);
+
   const initials = counsellor.display_name
     .split(" ")
     .filter((w) => !/^(dr|prof|mr|ms|mrs)\.?$/i.test(w))
@@ -105,9 +108,12 @@ function ChatInner({ counsellor, conversationId, nowMs }: Props) {
           <p className="truncate text-xs font-bold text-ilo-plum">{counsellor.display_name}</p>
           <p className="truncate text-[10px] text-ilo-ink/70">{presenceLabel(counsellor.counsellor_availability ?? [], nowMs)}</p>
         </div>
-        <Link href="/sessions/book?mode=video" className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-ilo-plum/20 bg-ilo-blush px-3 text-[11px] font-semibold text-ilo-plum">
+        <button type="button" disabled={busy} onClick={() => startCall({ counsellorId: counsellor.id, kind: "video" })} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-ilo-plum/20 bg-ilo-blush px-3 text-[11px] font-semibold text-ilo-plum disabled:opacity-60">
           <Video className="h-3.5 w-3.5" /> Video Call
-        </Link>
+        </button>
+        <button type="button" disabled={busy} onClick={() => startCall({ counsellorId: counsellor.id, kind: "audio" })} aria-label="Audio call" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-ilo-plum/20 bg-ilo-blush text-ilo-plum disabled:opacity-60">
+          <Phone className="h-3.5 w-3.5" />
+        </button>
       </header>
 
       <div className="space-y-1 border-b border-ilo-plum/10 bg-ilo-blush/60 px-4 py-2 text-[10px] leading-snug text-ilo-plum">

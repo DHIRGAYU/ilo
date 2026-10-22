@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { WorkspaceShell } from "@/components/counsellor/WorkspaceShell";
+import { CallProvider } from "@/components/call/CallProvider";
 import { getWorkspace } from "@/lib/counsellor-data";
 import { E2EEProvider } from "@/components/e2ee/E2EEProvider";
 
@@ -11,15 +12,16 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
 
   return (
     <E2EEProvider userId={ws.userId}>
-
-    <WorkspaceShell
-      fullName={ws.me.fullName}
-      initials={ws.me.initials}
-      college={ws.college}
-      badges={{ requests: ws.dash.triage, inbox: ws.dash.unread }}
-      >
-      {children}
-    </WorkspaceShell>
-      </E2EEProvider>
+      <CallProvider role="counsellor">
+        <WorkspaceShell
+          fullName={ws.me.fullName}
+          initials={ws.me.initials}
+          college={ws.college}
+          badges={{ requests: ws.dash.triage, inbox: ws.dash.unread }}
+        >
+          {children}
+        </WorkspaceShell>
+      </CallProvider>
+    </E2EEProvider>
   );
 }

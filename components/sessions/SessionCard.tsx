@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Clock, MapPin, MessageCircle, Phone, Video } from "lucide-react";
 import { CancelButton } from "@/components/sessions/CancelButton";
+import { JoinSessionButton } from "@/components/call/JoinSessionButton";
 import { canChange, friendlyWhen, shortName } from "@/lib/sessions";
 
 export type SessionRow = {
@@ -56,6 +57,11 @@ export function UpcomingCard({ s, nowMs }: { s: SessionRow; nowMs: number }) {
           </Link>
         )}
       </div>
+      {(s.mode === "video" || s.mode === "phone") && (
+        <div className="mt-3">
+          <JoinSessionButton appointmentId={s.id} kind={s.mode === "video" ? "video" : "audio"} startsAtMs={start} endsAtMs={Date.parse(s.ends_at)} />
+        </div>
+      )}
       {editable ? (
         <CancelButton id={s.id} />
       ) : (

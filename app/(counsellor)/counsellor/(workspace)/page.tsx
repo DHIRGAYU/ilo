@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowRight, ArrowUpRight, CalendarDays, Clock, Heart, MessageCircle, Sparkles, User } from "lucide-react";
+import { ArrowUpRight, CalendarDays, Clock, Heart, Sparkles, User } from "lucide-react";
 import { getWorkspace } from "@/lib/counsellor-data";
-import { MODE_LABEL, ago } from "@/lib/counsellor-day";
+import { MODE_LABEL } from "@/lib/counsellor-day";
 import { LiveAttention, LiveStat } from "@/components/counsellor/LiveDash";
+import { JoinSessionButton } from "@/components/call/JoinSessionButton";
 
 export const metadata = { title: "Dashboard | Ilo counsellor space", description: "Your day at a glance: sessions, messages and what needs attention." };
 
@@ -75,11 +76,10 @@ export default async function DashboardPage() {
               <p className="mt-2 max-w-md text-xs leading-relaxed text-white/80">
                 A quiet check-in with {nx.alias}. {nx.mode === "video" ? "Your private room is ready when you are." : nx.mode === "phone" ? "You'll be calling them at the start time." : "You'll be meeting in person."}
               </p>
-              {nx.mode === "video" && (
-                <p className="mt-4 flex flex-wrap items-center gap-3 text-[11px] text-white/70">
-                  <span aria-disabled="true" className="inline-flex h-10 cursor-not-allowed items-center rounded-full bg-white/90 px-5 text-xs font-bold text-ilo-plum opacity-70">Join private room</span>
-                  Private video rooms arrive in a later update.
-                </p>
+              {nx.mode !== "in_person" && (
+                <div className="mt-4">
+                  <JoinSessionButton appointmentId={nx.id} kind={nx.mode === "video" ? "video" : "audio"} startsAtMs={nx.startMs} endsAtMs={nx.startMs + 45 * 60_000} variant="light" label={nx.mode === "video" ? "Join private room" : "Start call"} />
+                </div>
               )}
             </div>
             <dl className="relative flex items-center gap-6 lg:gap-8">
