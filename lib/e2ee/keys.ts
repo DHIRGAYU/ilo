@@ -3,6 +3,11 @@ import { normalizeRecoveryCode } from "./recovery";
 
 export type Keypair = { publicKey: Uint8Array; secretKey: Uint8Array };
 
+export async function notesKeyFrom(secretKey: Uint8Array): Promise<Uint8Array> {
+  const s = await getSodium();
+  return s.crypto_kdf_derive_from_key(32, 2, "ilonotes", secretKey);
+}
+
 // Exactly what is stored in public.key_backups. The server can see these values but cannot open them.
 export type KeyBackup = {
   wrapped_key: string;

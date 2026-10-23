@@ -59,8 +59,8 @@ export default async function DashboardPage() {
       <section aria-label="Today at a glance" className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Sessions today" value={n} sub="on your calendar" icon={CalendarDays} />
         <LiveStat which="unread" />
-        <LiveStat which="triage" />
-        <Stat label="Follow-ups due" value={d.followUps} sub="arrive with session notes" icon={Heart} />
+        <Stat label="Awaiting triage" value={d.triage} sub="new requests" icon={Clock} />
+        <Stat label="Follow-ups due" value={d.followUps} sub="marked in session notes" icon={Heart} />
       </section>
 
       <section aria-labelledby="next-title" className="relative mt-5 overflow-hidden rounded-3xl bg-gradient-to-br from-ilo-plum to-ilo-deep p-6 text-white shadow-lg lg:p-8">

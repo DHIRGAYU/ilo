@@ -37,6 +37,9 @@ export default async function HomePage() {
       <p className="mt-0.5 text-xs text-ilo-ink/70">Your private space is ready when you are.</p>
 
       <CampusCounsellorCard counsellor={counsellor} />
+      <a href="/request" className="mt-2 flex items-center justify-between rounded-xl border border-ilo-plum/10 bg-white px-3 py-2.5 text-[11px] text-ilo-ink/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ilo-plum">
+        Can&apos;t find a time that works? <span className="font-bold text-ilo-plum">Send a request →</span>
+      </a>
 
       <div className="mt-5 flex items-baseline justify-between">
         <h2 className="text-xs font-bold text-ilo-plum">Not sure where to start?</h2>

@@ -54,7 +54,7 @@ export function WorkspaceShell({ fullName, initials, college, badges: serverBadg
 }) {
   const path = usePathname();
   const live = useE2EE();
-  const badges: Badges = live.state === "ready" ? { requests: live.triage, inbox: live.unreadTotal } : serverBadges;
+  const badges: Badges = live.state === "ready" ? { requests: serverBadges.requests, inbox: live.unreadTotal }: serverBadges;
   const needsKey = (live.state === "needs_setup" || live.state === "needs_restore") && !path.startsWith("/counsellor/inbox");
   const [drawer, setDrawer] = useState(false);
   const [menu, setMenu] = useState(false);

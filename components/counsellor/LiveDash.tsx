@@ -29,7 +29,7 @@ export function LiveAttention({ items, labels, nowMs }: { items: AttentionItem[]
   const fromMessages: AttentionItem[] = state !== "ready" ? [] : Object.entries(summaries)
     .filter(([id, s]) => !s.lastMine && labels[id])
     .map(([id, s]) => ({
-      key: `m-${id}`, kind: s.hasMine ? "New message" : "New request", icon: "message", alias: labels[id], text: snippet(s.lastBody), atMs: s.lastAt,
+      key: `m-${id}`, kind: "New message" , icon: "message", alias: labels[id], text: snippet(s.lastBody), atMs: s.lastAt,
     }));
   const all = [...fromMessages, ...items].sort((a, b) => b.atMs - a.atMs).slice(0, 4);
 

@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 // Student app pages that need a signed-in user
-const STUDENT_PROTECTED = ["/home", "/sessions", "/learn", "/profile", "/messages", "/self-check", "/feelings", "/preferences"];
+const STUDENT_PROTECTED = ["/home", "/sessions", "/learn", "/profile", "/messages", "/self-check", "/feelings", "/preferences", "/request"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

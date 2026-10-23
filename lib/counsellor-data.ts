@@ -45,6 +45,17 @@ export const getWorkspace = cache(async () => {
     nowMs, names,
 
   });
+  const { count: newRequests } = await supabase.from("support_requests").select("id", { count: "exact", head: true }).eq("counsellor_id", me.id).eq("status", "new");
+  dash.triage = newRequests ?? 0;
+  const { data: recs } = await supabase.from("session_records").select("appointment_id").eq("counsellor_id", me.id).eq("follow_up", true);
+  if (recs?.length) {
+    const flagged = new Set(recs.map((r: { appointment_id: string }) => r.appointment_id));
+    const list = (appts ?? []) as { id: string; student_id: string; status: string; ends_at: string }[];
+    const waiting = new Set<string>();
+    for (const a of list) if (flagged.has(a.id)) waiting.add(a.student_id);
+    for (const a of list) if (a.status === "confirmed" && Date.parse(a.ends_at) > nowMs) waiting.delete(a.student_id);
+    dash.followUps = waiting.size;
+  }
 
   const initials = me.display_name
     .split(" ")
@@ -59,7 +70,7 @@ export const getWorkspace = cache(async () => {
     college: (inst?.name as string | undefined) ?? "your institution",
     userId: user.id,
     dash,
-    labels: Object.fromEntries((convos ?? []).map((c:any) => [c.id as string, studentLabel(c.student_id as string, names)])) as Record<string, string>, names,
+    labels: Object.fromEntries((convos ?? []).map((c: any) => [c.id as string, studentLabel(c.student_id as string, names)])) as Record<string, string>, names,
     nowMs,
   };
 });

@@ -4,6 +4,7 @@ import { archiveKeyFrom, generateKeypair, publicFromSecret, unwrapSecretKey, wra
 import { generateRecoveryCode } from "./recovery";
 import { fromB64, getSodium, toB64 } from "./sodium";
 import { Store, type Message, type Summary } from "./store";
+import { notesKeyFrom } from "./keys"
 
 export type { Message, Status, Summary } from "./store";
 
@@ -40,7 +41,7 @@ export class E2EEClient {
   // Mail that could not be opened is reported here and left on the server rather than being acknowledged
   issues: { rowId: string; reason: string }[] = [];
 
-  constructor(private supabase: SupabaseClient, private userId: string) {}
+  constructor(private supabase: SupabaseClient, private userId: string) { }
 
   onChange(cb: (conversationId?: string) => void) { this.listeners.add(cb); return () => { this.listeners.delete(cb); }; }
   private emit(conversationId?: string) {
@@ -305,6 +306,20 @@ export class E2EEClient {
 
   messages(conversationId: string) { return this.store.list(conversationId); }
   summaries(): Promise<Record<string, Summary>> { return this.store.summaries(); }
+  async sealText(text: string): Promise<{ ciphertext: string; nonce: string }> {
+    return encryptBlob(new TextEncoder().encode(text), await notesKeyFrom(this.sk()));
+  }
+  async openText(sealed: { ciphertext: string; nonce: string }): Promise<string> {
+    return new TextDecoder().decode(await decryptBlob(sealed, await notesKeyFrom(this.sk())));
+  }
+  async sealFor(id: string, text: string, recipientPublicKey: string) {
+    return encryptMessage(text, id, recipientPublicKey, this.sk());
+  }
+  async openFrom(id: string, ciphertext: string, nonce: string, senderPublicKey: string): Promise<string> {
+    const out = await decryptMessage(ciphertext, nonce, senderPublicKey, this.sk());
+    if (out.id !== id) throw new E2EEError("id_mismatch");
+    return out.body;
+  }
 
   // Everything up to the newest message from the other person counts as read
   async markRead(conversationId: string) {
@@ -328,7 +343,7 @@ export class E2EEClient {
   private scheduleBackup() {
     if (this.state !== "ready") return;
     if (this.backupTimer) clearTimeout(this.backupTimer);
-    this.backupTimer = setTimeout(() => void this.backupAll().catch(() => {}), 20_000);
+    this.backupTimer = setTimeout(() => void this.backupAll().catch(() => { }), 20_000);
   }
 
   async backupAll() {

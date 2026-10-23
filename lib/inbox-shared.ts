@@ -72,7 +72,7 @@ export const sortConvos = (list: InboxConvo[]) =>
 export function rowTag(c: InboxConvo): { label: string; className: string } | null {
   if (c.urgent) return { label: "Urgent", className: "bg-ilo-crisis/10 text-ilo-crisis" };
   if (c.resolved) return { label: "Resolved", className: "bg-ilo-ink/10 text-ilo-ink" };
-  if (c.lastRole === "student" && !c.everReplied) return { label: "New request", className: "bg-ilo-blush text-ilo-plum" };
+  if (c.lastRole === "student" && !c.everReplied) return { label: "New", className: "bg-ilo-blush text-ilo-plum" };
   if (c.lastRole === "counsellor") return { label: "Waiting on student", className: "bg-emerald-50 text-emerald-800" };
   return null;
 }
