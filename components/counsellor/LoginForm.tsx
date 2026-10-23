@@ -11,6 +11,7 @@ const field = "mt-1.5 h-11 w-full rounded-xl border border-ilo-plum/15 bg-white 
 
 export function LoginForm() {
   const router = useRouter();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
@@ -43,6 +44,11 @@ export function LoginForm() {
       return;
     }
 
+    // Optional: if a name was typed, save it as the name students and the workspace see.
+    // A failure here must not block sign-in, so it only shows up on the next screen if it matters.
+    const typed = name.trim();
+    if (typed) await supabase.rpc("set_my_counsellor_name", { p_name: typed });
+
     router.replace("/counsellor");
     router.refresh();
   }
@@ -58,6 +64,11 @@ export function LoginForm() {
           </p>
 
           <form onSubmit={onSubmit} className="mt-6 space-y-4" noValidate>
+            <div>
+              <label htmlFor="name" className="text-xs font-semibold text-ilo-plum">Your name <span className="font-normal text-ilo-ink/50">(shown to students)</span></label>
+              <input id="name" type="text" autoComplete="name" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="Dr. Meera Sen" className={field} />
+              <p className="mt-1 text-[11px] text-ilo-ink/60">Leave blank to keep the name already on your account.</p>
+            </div>
             <div>
               <label htmlFor="email" className="text-xs font-semibold text-ilo-plum">Institution email</label>
               <input id="email" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@yourinstitution.edu.in" className={field} />
