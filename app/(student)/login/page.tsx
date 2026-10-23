@@ -4,7 +4,7 @@ import { Logo } from "@/components/ui/Logo";
 import { SignInButton } from "@/components/SignInButton";
 
 const MESSAGES: Record<string, string> = {
-  not_registered: "That email isn't linked to a registered college. Sign in with your college email ID.",
+  not_registered: "Please sign in with your college email ID (it ends in .ac.in).",
   signin_failed: "Sign-in didn't finish. Please try again.",
 };
 
