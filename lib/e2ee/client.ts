@@ -5,6 +5,7 @@ import { generateRecoveryCode } from "./recovery";
 import { fromB64, getSodium, toB64 } from "./sodium";
 import { Store, type Message, type Summary } from "./store";
 import { notesKeyFrom } from "./keys"
+import { safetyCode } from "./safety";
 
 export type { Message, Status, Summary } from "./store";
 
@@ -21,7 +22,7 @@ export class E2EEError extends Error {
 }
 
 // Database errors that retrying will not fix. Anything else (no network, timeouts) is treated as temporary.
-const PERMANENT = ["not_allowed", "bad_message", "recipient_unavailable", "recipient_no_key", "sender_no_key", "mailbox_full"];
+const PERMANENT = ["not_allowed", "bad_message", "recipient_unavailable", "recipient_no_key", "sender_no_key", "mailbox_full", "key_changed"];
 const SAVEABLE = new Set(["sent", "delivered", "expired", "received"]);
 
 type Peer = { publicKey: string; version: number };
@@ -185,7 +186,33 @@ export class E2EEClient {
     this.peers.set(conversationId, p);
     return p;
   }
+  private async checkSender(conversationId: string, senderKey: string): Promise<"ok" | "held" | "unknown"> {
+    const pins = await this.store.getPins(conversationId);
+    if (pins.includes(senderKey)) return "ok";
+    const current = await this.peer(conversationId, true); // what the server lists for them right now
+    if (current.publicKey !== senderKey) return "unknown";
+    if (pins.length === 0) { await this.store.addPin(conversationId, senderKey); return "ok"; }
+    return "held";
+  }
 
+  async keyChanged(conversationId: string) { return this.store.getKeyChanged(conversationId); }
+
+  async trustNewKey(conversationId: string) {
+    const current = await this.peer(conversationId, true);
+    await this.store.addPin(conversationId, current.publicKey);
+    await this.store.setKeyChanged(conversationId, false);
+    for (const m of await this.store.listByStatus("failed")) {
+      if (m.conversationId === conversationId && m.reason === "key_changed") await this.retry(m.id);
+    }
+    void this.collect();
+    this.emit(conversationId);
+  }
+
+  async safetyCode(conversationId: string) {
+    const local = await this.store.getIdentity();
+    if (!local) throw new E2EEError("not_ready");
+    return safetyCode(local.publicKey, (await this.peer(conversationId)).publicKey);
+  }
   private async deliver(id: string) {
     if (this.inFlight.has(id)) return;
     this.inFlight.add(id);
@@ -199,6 +226,10 @@ export class E2EEClient {
       try {
         for (let attempt = 0; attempt < 2; attempt++) {
           const peer = await this.peer(m.conversationId, attempt > 0);
+          // The other person's key must be one we already trusted. First contact is trusted; a different key waits for their say-so.
+          const pins = await this.store.getPins(m.conversationId);
+          if (pins.length === 0) await this.store.addPin(m.conversationId, peer.publicKey);
+          else if (!pins.includes(peer.publicKey)) { await this.store.setKeyChanged(m.conversationId, true); throw new E2EEError("key_changed"); }
           const sealed = await encryptMessage(m.body, id, peer.publicKey, this.sk());
           const { data, error } = await this.supabase.rpc("send_mailbox_message", {
             p_conversation_id: m.conversationId, p_client_id: id, p_ciphertext: sealed.ciphertext, p_nonce: sealed.nonce, p_recipient_key_version: peer.version,
@@ -234,6 +265,11 @@ export class E2EEClient {
   }
 
   private async collectNow() {
+    if (this.state !== "ready") return;
+    // Only the device the server lists as active may take mail, or it would empty the mailbox for the real one
+    const local = await this.store.getIdentity();
+    const { data: k } = await this.supabase.from("user_keys").select("device_id").eq("user_id", this.userId).maybeSingle();
+    if (local && k && k.device_id !== local.deviceId) { this.state = "other_device"; this.emit(); return; }
     const secretKey = this.sk();
     for (let page = 0; page < 20; page++) {
       const { data, error } = await this.supabase
@@ -247,6 +283,9 @@ export class E2EEClient {
       for (const row of data) {
         if (this.badRows.has(row.id)) continue;
         try {
+          const who = await this.checkSender(row.conversation_id, row.sender_public_key);
+          if (who === "unknown") throw new E2EEError("unknown_sender"); // not a key the server lists for them: never open it
+          if (who === "held") { await this.store.setKeyChanged(row.conversation_id, true); touched.add(row.conversation_id); continue; } // wait until they have checked the new key
           const out = await decryptMessage(row.ciphertext, row.nonce, row.sender_public_key, secretKey);
           if (out.id !== row.client_id) throw new E2EEError("id_mismatch");
           const added = await this.store.putMessage(
@@ -264,7 +303,7 @@ export class E2EEClient {
         await this.supabase.rpc("ack_mailbox_messages", { p_ids: ackIds.slice(i, i + 200) });
       }
       touched.forEach((c) => this.emit(c));
-      if (data.length < 200) return;
+      if (data.length < 200 || ackIds.length === 0) return;
     }
   }
 

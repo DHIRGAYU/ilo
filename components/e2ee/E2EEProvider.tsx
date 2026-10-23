@@ -30,7 +30,7 @@ export function E2EEProvider({ userId, children }: { userId: string; children: R
 
   const begin = useCallback((c: E2EEClient) => {
     stopRef.current?.();
-    const off = c.onChange(() => setRev((r) => r + 1));
+    const off = c.onChange(() => { setRev((r) => r + 1); setState(c.state); });
     const stop = c.subscribe();
     stopRef.current = () => { off(); stop(); };
     setRev((r) => r + 1);

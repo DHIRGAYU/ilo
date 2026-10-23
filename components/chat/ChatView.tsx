@@ -11,6 +11,8 @@ import { presenceLabel, type AvailSlot } from "@/lib/booking";
 import { dayKey, dayLabel, timeLabel } from "@/lib/chat";
 import { fromStore, type Msg } from "@/lib/inbox-shared";
 import { shortName } from "@/lib/sessions";
+import { SecurityCode } from "@/components/e2ee/SecurityCode";
+
 
 export type ChatCounsellor = {
   id: string;
@@ -93,6 +95,7 @@ function ChatInner({ counsellor, conversationId, nowMs }: Props) {
     switch (reason) {
       case "recipient_no_key": return `${short} hasn't turned on secure messaging yet`;
       case "mailbox_full": return `${short}'s inbox is full right now`;
+      case "key_changed": return `${short}'s security key changed. Open the security code`;
       default: return "Not sent";
     }
   }
@@ -108,6 +111,7 @@ function ChatInner({ counsellor, conversationId, nowMs }: Props) {
           <p className="truncate text-xs font-bold text-ilo-plum">{counsellor.display_name}</p>
           <p className="truncate text-[10px] text-ilo-ink/70">{presenceLabel(counsellor.counsellor_availability ?? [], nowMs)}</p>
         </div>
+        {convId && <SecurityCode conversationId={convId} name={short} />}
         <button type="button" disabled={busy} onClick={() => startCall({ counsellorId: counsellor.id, kind: "video" })} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-ilo-plum/20 bg-ilo-blush px-3 text-[11px] font-semibold text-ilo-plum disabled:opacity-60">
           <Video className="h-3.5 w-3.5" /> Video Call
         </button>

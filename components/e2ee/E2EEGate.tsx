@@ -56,7 +56,11 @@ export function E2EEGate({ audience, backHref, children }: { audience: "student"
     body = (
       <>
         <h2 className="font-display text-xl text-ilo-deep">Secure messaging couldn&apos;t start</h2>
-        <p className="mt-2 text-xs leading-relaxed text-ilo-ink">This browser blocked the private storage Ilo needs. Try Chrome, Safari or Firefox, and turn off private browsing.</p>
+        <p className="mt-2 text-xs leading-relaxed text-ilo-ink">
+          {typeof window !== "undefined" && !window.isSecureContext
+            ? "Secure messaging needs a secure (https) page, and this page is on plain http. Open Ilo through its https address."
+            : "This browser blocked the private storage Ilo needs. Try Chrome, Safari or Firefox, and turn off private browsing."}
+        </p>
         <button type="button" onClick={retryInit} className={`mt-4 ${primary}`}>Try again</button>
       </>
     );

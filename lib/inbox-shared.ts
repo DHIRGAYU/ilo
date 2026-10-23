@@ -52,6 +52,7 @@ export function failText(reason?: string) {
     case "recipient_no_key": return "They haven't turned on secure messaging yet";
     case "recipient_unavailable": return "They can't receive messages yet";
     case "mailbox_full": return "Their inbox is full right now";
+    case "key_changed": return "Their security key changed. Open the security code";
     default: return "Not sent";
   }
 }

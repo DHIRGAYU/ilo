@@ -28,7 +28,7 @@ const keyOf = (mine: boolean, id: string) => `${mine ? "m" : "r"}:${id}`;
 const enc = new TextEncoder(), dec = new TextDecoder();
 
 export class Store {
-  private constructor(private db: IDBDatabase, private deviceKey: CryptoKey, private name: string) {}
+  private constructor(private db: IDBDatabase, private deviceKey: CryptoKey, private name: string) { }
 
   static async open(userId: string): Promise<Store> {
     const name = `ilo-e2ee-${userId}`; // one database per account, so people sharing a device never mix
@@ -73,6 +73,19 @@ export class Store {
   async getIdentity() { return (await req(this.meta().objectStore("meta").get("identity"))) as Identity | undefined; }
   async putIdentity(i: Identity) { const tx = this.meta("readwrite"); tx.objectStore("meta").put(i, "identity"); await done(tx); }
   async clearIdentity() { const tx = this.meta("readwrite"); tx.objectStore("meta").delete("identity"); await done(tx); }
+  // Keys we have accepted for the other person, per conversation (the first one is trusted on first contact)
+  async getPins(conversationId: string): Promise<string[]> {
+    return ((await req(this.meta().objectStore("meta").get(`pins:${conversationId}`))) as string[] | undefined) ?? [];
+  }
+  async addPin(conversationId: string, publicKey: string) {
+    const pins = await this.getPins(conversationId);
+    if (pins.includes(publicKey)) return;
+    const tx = this.meta("readwrite");
+    tx.objectStore("meta").put([...pins, publicKey], `pins:${conversationId}`);
+    await done(tx);
+  }
+  async getKeyChanged(conversationId: string) { return Boolean(await req(this.meta().objectStore("meta").get(`kc:${conversationId}`))); }
+  async setKeyChanged(conversationId: string, value: boolean) { const tx = this.meta("readwrite"); tx.objectStore("meta").put(value, `kc:${conversationId}`); await done(tx); }
   async getLastSeq(conversationId: string) { return ((await req(this.meta().objectStore("meta").get(`seq:${conversationId}`))) as number | undefined) ?? 0; }
   async setLastSeq(conversationId: string, seq: number) { const tx = this.meta("readwrite"); tx.objectStore("meta").put(seq, `seq:${conversationId}`); await done(tx); }
 
