@@ -6,6 +6,8 @@ import { fromB64, getSodium, toB64 } from "./sodium";
 import { Store, type Message, type Summary } from "./store";
 import { notesKeyFrom } from "./keys"
 import { safetyCode } from "./safety";
+import { chooseNote } from "./notes";
+
 
 export type { Message, Status, Summary } from "./store";
 
@@ -329,7 +331,7 @@ export class E2EEClient {
       .subscribe();
     const catchUp = () => {
       if (this.state !== "ready" || document.visibilityState !== "visible") return;
-      void this.collect(); void this.syncReceipts(); void this.flushOutbox();
+      void this.collect(); void this.syncReceipts(); void this.flushOutbox(),void this.flushNotes();
     };
     catchUp();
     window.addEventListener("online", catchUp);
@@ -341,12 +343,48 @@ export class E2EEClient {
       document.removeEventListener("visibilitychange", catchUp);
       clearInterval(timer);
     };
+
   }
 
   messages(conversationId: string) { return this.store.list(conversationId); }
   summaries(): Promise<Record<string, Summary>> { return this.store.summaries(); }
   async sealText(text: string): Promise<{ ciphertext: string; nonce: string }> {
     return encryptBlob(new TextEncoder().encode(text), await notesKeyFrom(this.sk()));
+  }
+  async loadNote(appointmentId: string, server: { ciphertext: string; nonce: string } | null): Promise<string> {
+    const local = await this.store.getNote(appointmentId);
+    const choice = chooseNote(local, server?.nonce ?? null);
+    if (choice === "local" || choice === "keep") return local!.text;
+    if (choice === "empty") return "";
+    const text = await this.openText(server!);
+    await this.store.putNote(appointmentId, text, { synced: server!.nonce });
+    return text;
+  }
+
+  async saveNote(appointmentId: string, text: string): Promise<"synced" | "local"> {
+    await this.store.putNote(appointmentId, text);
+    return this.syncNote(appointmentId);
+  }
+
+  private async syncNote(appointmentId: string): Promise<"synced" | "local"> {
+    const n = await this.store.getNote(appointmentId);
+    if (!n || !n.dirty) return "synced";
+    try {
+      const sealed = n.text.trim() ? await this.sealText(n.text) : null;
+      const { error } = await this.supabase.rpc("save_session_record", sealed
+        ? { p_appointment_id: appointmentId, p_note_ciphertext: sealed.ciphertext, p_note_nonce: sealed.nonce }
+        : { p_appointment_id: appointmentId, p_clear_note: true });
+      if (error) return "local";
+      await this.store.markNoteSynced(appointmentId, n.updatedAt, sealed?.nonce ?? null);
+      return "synced";
+    } catch {
+      return "local";
+    }
+  }
+
+  async flushNotes() {
+    if (this.state !== "ready") return;
+    for (const id of await this.store.dirtyNotes()) await this.syncNote(id);
   }
   async openText(sealed: { ciphertext: string; nonce: string }): Promise<string> {
     return new TextDecoder().decode(await decryptBlob(sealed, await notesKeyFrom(this.sk())));

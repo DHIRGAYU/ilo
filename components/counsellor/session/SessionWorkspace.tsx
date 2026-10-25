@@ -18,39 +18,46 @@ const btn = `inline-flex items-center gap-1.5 rounded-full border border-ilo-plu
 const statusText = (status: string, outcome: Outcome | null) =>
   outcome === "no_show" ? "No-show" : outcome === "held" || status === "completed" ? "Completed" : status === "cancelled" ? "Cancelled" : "Booked";
 
-// A private note, locked on this device before it is sent. The server only ever holds scrambled text.
+// A private note. It is written to this device first (locked with the device key), then uploaded locked with a key only you hold.
+// So it survives going offline or closing the tab, and the server only ever holds scrambled text.
 function NoteEditor({ appointmentId, sealed, disabled }: { appointmentId: string; sealed: SessionData["note"]; disabled: boolean }) {
   const { state, client } = useE2EE();
-  const supabase = useMemo(() => createClient(), []);
   const [text, setText] = useState("");
-  const [loaded, setLoaded] = useState(!sealed);
+  const [loaded, setLoaded] = useState(false);
   const [broken, setBroken] = useState(false);
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "saving" | "synced" | "local" | "error">("idle");
   const latest = useRef("");
   const dirty = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const serverCopy = useRef(sealed); // read once when the note opens; later page refreshes must never overwrite what is being typed
+  useEffect(() => { serverCopy.current = sealed; });
 
   useEffect(() => {
-    if (!sealed || !client || state !== "ready") return;
+    if (!client || state !== "ready") return;
     let live = true;
-    client.openText(sealed).then((t) => { if (live) { setText(t); latest.current = t; setLoaded(true); } }).catch(() => { if (live) setBroken(true); });
+    client.loadNote(appointmentId, serverCopy.current)
+      .then((t) => { if (live) { setText(t); latest.current = t; setLoaded(true); } })
+      .catch(() => { if (live) setBroken(true); });
     return () => { live = false; };
-  }, [sealed, client, state]);
+  }, [client, state, appointmentId]);
 
   const save = useCallback(async () => {
     if (!client || !dirty.current) return;
     dirty.current = false;
     setStatus("saving");
-    const value = latest.current;
-    const args = value.trim()
-      ? await client.sealText(value).then((s) => ({ p_note_ciphertext: s.ciphertext, p_note_nonce: s.nonce, p_clear_note: false }))
-      : { p_clear_note: true };
-    const { error } = await supabase.rpc("save_session_record", { p_appointment_id: appointmentId, ...args });
-    if (error) dirty.current = true;
-    setStatus(error ? "error" : "saved");
-  }, [client, supabase, appointmentId]);
+    try { setStatus(await client.saveNote(appointmentId, latest.current)); }
+    catch { dirty.current = true; setStatus("error"); }
+  }, [client, appointmentId]);
 
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); if (dirty.current) void save(); }, [save]);
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden") void save(); };
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      if (timer.current) clearTimeout(timer.current);
+      if (dirty.current) void save();
+    };
+  }, [save]);
 
   if (state === "loading") return <p className="mt-3 text-xs text-ilo-ink/70" role="status">Opening your secure notes…</p>;
   if (state !== "ready") {
@@ -71,13 +78,15 @@ function NoteEditor({ appointmentId, sealed, disabled }: { appointmentId: string
         onChange={(e) => {
           setText(e.target.value); latest.current = e.target.value; dirty.current = true; setStatus("idle");
           if (timer.current) clearTimeout(timer.current);
-          timer.current = setTimeout(() => void save(), 1000);
+          timer.current = setTimeout(() => void save(), 600);
         }}
         className={`w-full resize-y rounded-xl border border-ilo-plum/15 bg-ilo-bg px-3 py-3 text-xs leading-relaxed text-ilo-ink placeholder:text-ilo-ink/50 disabled:opacity-60 ${focus}`}
       />
-      <p className="mt-1 flex h-4 items-center justify-between text-[10px] text-ilo-ink/60" aria-live="polite">
-        <span>{status === "saving" ? "Saving…" : status === "saved" ? "Saved" : status === "error" ? "Couldn't save. Will retry when you type again." : ""}</span>
-        <span>{text.length}/4000</span>
+      <p className="mt-1 flex min-h-4 items-center justify-between gap-3 text-[10px] text-ilo-ink/60" aria-live="polite">
+        <span>
+          {status === "saving" ? "Saving…" : status === "synced" ? "Saved" : status === "local" ? "Saved on this device. It will upload when you're back online." : status === "error" ? "Couldn't save. Please keep this tab open and try again." : ""}
+        </span>
+        <span className="shrink-0">{text.length}/4000</span>
       </p>
     </div>
   );
@@ -172,7 +181,7 @@ export function SessionWorkspace({ data }: { data: SessionData }) {
               <h2 id="notes-title" className="font-display text-lg text-ilo-deep">Private session notes</h2>
               <span className="flex shrink-0 items-center gap-1 text-[10px] text-ilo-ink/60"><Lock className="h-3 w-3" aria-hidden="true" /> Only you can read these</span>
             </div>
-            <p className="mt-1 text-[11px] text-ilo-ink/70">Locked on your device before they are saved. Not even Ilo or your college can read them.</p>
+            <p className="mt-1 text-[11px] text-ilo-ink/70">Locked on your device before they are saved, and a copy stays here so you can keep writing offline. Not even Ilo or your college can read them.</p>
             <NoteEditor appointmentId={appt.id} sealed={data.note} disabled={!recordsReady || cancelled} />
           </section>
 

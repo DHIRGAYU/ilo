@@ -19,8 +19,12 @@ export type Summary = {
   hasMine: boolean;      // I have written at least once
 };
 type Sealed = { iv: Uint8Array; ct: Uint8Array };
+
 type Row = { key: string; id: string; conversationId: string; mine: boolean; at: number; status: Status; reason?: string; archived: 0 | 1; body: Sealed };
 export type Identity = { userId: string; deviceId: string; publicKey: string; keyVersion: number; sealedSecret: Sealed };
+
+export type StoredNote = { text: string; updatedAt: number; dirty: boolean; syncedNonce: string | null };
+type NoteRow = { id: string; body: Sealed; updatedAt: number; dirty: 0 | 1; syncedNonce: string | null };
 
 const req = <T,>(r: IDBRequest<T>) => new Promise<T>((ok, no) => { r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
 const done = (tx: IDBTransaction) => new Promise<void>((ok, no) => { tx.oncomplete = () => ok(); tx.onerror = () => no(tx.error); tx.onabort = () => no(tx.error); });
@@ -32,15 +36,22 @@ export class Store {
 
   static async open(userId: string): Promise<Store> {
     const name = `ilo-e2ee-${userId}`; // one database per account, so people sharing a device never mix
-    const open = indexedDB.open(name, 1);
+    const open = indexedDB.open(name, 2);
     open.onupgradeneeded = () => {
       const db = open.result;
-      db.createObjectStore("meta");
-      const m = db.createObjectStore("messages", { keyPath: "key" });
-      m.createIndex("byConv", ["conversationId", "at"]);
-      m.createIndex("byStatus", "status");
-      m.createIndex("byArchived", "archived");
+      if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta");
+      if (!db.objectStoreNames.contains("messages")) {
+        const m = db.createObjectStore("messages", { keyPath: "key" });
+        m.createIndex("byConv", ["conversationId", "at"]);
+        m.createIndex("byStatus", "status");
+        m.createIndex("byArchived", "archived");
+      }
+      if (!db.objectStoreNames.contains("notes")) {
+        const n = db.createObjectStore("notes", { keyPath: "id" });
+        n.createIndex("byDirty", "dirty");
+      }
     };
+
     const db = await req(open);
     let deviceKey = (await req(db.transaction("meta").objectStore("meta").get("deviceKey"))) as CryptoKey | undefined;
     if (!deviceKey) {
@@ -177,6 +188,39 @@ export class Store {
       out[conv] = { lastBody: dec.decode(await this.open(last.body)), lastMine: last.mine, lastAt: last.at, lastStatus: last.status, firstAt: first, unread, hasReceived, hasMine };
     }
     return out;
+  }
+
+  async getNote(id: string): Promise<StoredNote | undefined> {
+    const r = (await req(this.db.transaction("notes").objectStore("notes").get(id))) as NoteRow | undefined;
+    return r ? { text: dec.decode(await this.open(r.body)), updatedAt: r.updatedAt, dirty: r.dirty === 1, syncedNonce: r.syncedNonce } : undefined;
+  }
+
+  async putNote(id: string, text: string, opts: { synced?: string | null } = {}) {
+    const body = await this.seal(enc.encode(text));
+    const tx = this.db.transaction("notes", "readwrite");
+    const st = tx.objectStore("notes");
+    const prev = (await req(st.get(id))) as NoteRow | undefined;
+    const fromServer = opts.synced !== undefined;
+    st.put({
+      id, body,
+      updatedAt: fromServer ? prev?.updatedAt ?? Date.now() : Date.now(),
+      dirty: fromServer ? 0 : 1,
+      syncedNonce: fromServer ? opts.synced ?? null : prev?.syncedNonce ?? null,
+    } satisfies NoteRow);
+    await done(tx);
+  }
+
+  async markNoteSynced(id: string, updatedAt: number, nonce: string | null) {
+    const tx = this.db.transaction("notes", "readwrite");
+    const st = tx.objectStore("notes");
+    const r = (await req(st.get(id))) as NoteRow | undefined;
+    if (r && r.updatedAt === updatedAt) { r.dirty = 0; r.syncedNonce = nonce; st.put(r); }
+    await done(tx);
+  }
+
+  async dirtyNotes(): Promise<string[]> {
+    const keys = await req(this.db.transaction("notes").objectStore("notes").index("byDirty").getAllKeys(1));
+    return keys.map(String);
   }
 
   async conversationIds(): Promise<string[]> {
