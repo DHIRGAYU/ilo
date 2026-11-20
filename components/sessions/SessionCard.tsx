@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Clock, MapPin, MessageCircle, Phone, Video } from "lucide-react";
 import { CancelButton } from "@/components/sessions/CancelButton";
 import { JoinSessionButton } from "@/components/call/JoinSessionButton";
-import { canChange, friendlyWhen, shortName } from "@/lib/sessions";
+import { canChange, friendlyWhen } from "@/lib/sessions";
 
 export type SessionRow = {
   id: string;
@@ -11,7 +11,7 @@ export type SessionRow = {
   ends_at: string;
   mode: "in_person" | "video" | "phone";
   status: "confirmed" | "cancelled" | "completed";
-  student_note: string | null;
+  hasPrivateNote: boolean;
   counsellor: { display_name: string; qualification: string | null; designation: string | null; room: string | null } | null;
 };
 
@@ -43,8 +43,8 @@ export function UpcomingCard({ s, nowMs }: { s: SessionRow; nowMs: number }) {
         <p className="flex items-center gap-2"><Where s={s} /></p>
       </div>
 
-      {s.student_note && c && (
-        <p className="mt-3 text-[11px] italic leading-snug text-ilo-ink/80">Note to {shortName(c.display_name)}: “{s.student_note}”</p>
+      {s.hasPrivateNote && (
+        <p className="mt-3 text-[11px] italic leading-snug text-ilo-ink/80">A private note was sent with this booking.</p>
       )}
 
       <div className="mt-3 flex gap-2">

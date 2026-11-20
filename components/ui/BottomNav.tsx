@@ -17,7 +17,7 @@ export function BottomNav() {
     <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-[375px] border-t border-ilo-plum/10 bg-white/95 backdrop-blur">
       <ul className="grid grid-cols-4 pb-[env(safe-area-inset-bottom)]">
         {tabs.map(({ href, label, icon: Icon }) => {
-          const active = path === href;
+          const active = href === "/home" ? path === href : path === href || path.startsWith(`${href}/`);
           return (
             <li key={href}>
               <Link

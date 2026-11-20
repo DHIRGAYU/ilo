@@ -5,7 +5,9 @@ import { Archive, CheckCircle2, ChevronLeft, Lock, MoreHorizontal, PanelRight, P
 import { useCall } from "@/components/call/CallProvider";
 import { dayKey, dayLabel, timeLabel } from "@/lib/chat";
 import { failText, listTime, rowTag, type InboxConvo, type Msg } from "@/lib/inbox-shared";
+import type { SignalVote } from "@/lib/e2ee";
 import { SecurityCode } from "@/components/e2ee/SecurityCode";
+import { SignalChip } from "./SignalChip";
 
 const focus = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ilo-plum";
 const QUICK = ["I hear you", "One step at a time", "Let's find a time"];
@@ -25,9 +27,13 @@ type Props = {
   onOpenContext: () => void;
   onFlags: (patch: Flags) => void;
   nowMs: number;
+  signalsOn: boolean;
+  onToggleSignals: (on: boolean) => void;
+  votes: Record<string, SignalVote>;
+  onVote: (id: string, vote: SignalVote) => void;
 };
 
-export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry, onResend, onBack, onOpenContext, onFlags, nowMs }: Props) {
+export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry, onResend, onBack, onOpenContext, onFlags, nowMs, signalsOn, onToggleSignals, votes, onVote }: Props) {
   const { startCall, busy } = useCall();
   const scroller = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState(false);
@@ -85,6 +91,9 @@ export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry
         <SecurityCode conversationId={convo.id} name={convo.alias} />
         <button type="button" onClick={() => setEscalate(true)} className={`flex shrink-0 items-center gap-1.5 rounded-full border border-ilo-crisis/30 bg-white px-3 py-2 text-[11px] font-bold text-ilo-crisis hover:bg-ilo-crisis/5 ${focus}`}>
           <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" /> <span className="hidden sm:inline">Escalate</span><span className="sr-only sm:hidden">Escalate</span>
+        </button>
+        <button type="button" aria-pressed={signalsOn} onClick={() => onToggleSignals(!signalsOn)} className={`rounded-full border px-2.5 py-2 text-[11px] font-bold ${signalsOn ? "border-ilo-plum/20 bg-ilo-blush text-ilo-plum" : "border-ilo-plum/15 bg-white text-ilo-ink/60"} ${focus}`}>
+          Signal
         </button>
         <button type="button" onClick={onOpenContext} aria-label="Open student context" className={`rounded-full border border-ilo-plum/15 p-2 text-ilo-plum xl:hidden ${focus}`}>
           <PanelRight className="h-4 w-4" />
@@ -148,6 +157,9 @@ export function ChatPane({ convo, msgs, loading, draft, onDraft, onSend, onRetry
                       <span className="mt-0.5 text-[10px] text-ilo-ink/60">
                         {it.m.status === "sending" || it.m.status === "queued" ? "Sending…" : `${timeLabel(it.m.at)}${it.m.mine ? (it.m.status === "delivered" ? " · Delivered" : " · Sent") : ""}`}
                       </span>
+                    )}
+                    {signalsOn && !it.m.mine && it.m.signal && (
+                      <SignalChip signal={it.m.signal} vote={votes[it.m.id]} onVote={(vote) => onVote(it.m.id, vote)} />
                     )}
                   </div>
                 )}

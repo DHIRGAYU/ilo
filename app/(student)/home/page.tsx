@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Heart, Settings2, Sparkles, Activity, BookOpen, ShieldCheck, ArrowUpRight } from "lucide-react";
 import { BottomNav } from "@/components/ui/BottomNav";
 import { createClient } from "@/lib/supabase/server";
@@ -37,9 +38,9 @@ export default async function HomePage() {
       <p className="mt-0.5 text-xs text-ilo-ink/70">Your private space is ready when you are.</p>
 
       <CampusCounsellorCard counsellor={counsellor} />
-      <a href="/request" className="mt-2 flex items-center justify-between rounded-xl border border-ilo-plum/10 bg-white px-3 py-2.5 text-[11px] text-ilo-ink/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ilo-plum">
+      <Link href="/request" className="mt-2 flex items-center justify-between rounded-xl border border-ilo-plum/10 bg-white px-3 py-2.5 text-[11px] text-ilo-ink/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ilo-plum">
         Can&apos;t find a time that works? <span className="font-bold text-ilo-plum">Send a request →</span>
-      </a>
+      </Link>
 
       <div className="mt-5 flex items-baseline justify-between">
         <h2 className="text-xs font-bold text-ilo-plum">Not sure where to start?</h2>
@@ -49,14 +50,14 @@ export default async function HomePage() {
       <ul className="mt-2.5 grid grid-cols-2 gap-2">
         {options.map(({ title, sub, icon: Icon, href }) => (
           <li key={title}>
-            <a href={href} className="relative flex h-full min-h-[7rem] flex-col rounded-xl border border-ilo-plum/10 bg-white p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ilo-plum">
+            <Link href={href} className="relative flex h-full min-h-[7rem] flex-col rounded-xl border border-ilo-plum/10 bg-white p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ilo-plum">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-ilo-blush text-ilo-plum">
                 <Icon className="h-3.5 w-3.5" />
               </span>
               <span className="mt-2 text-xs font-bold leading-snug text-ilo-plum">{title}</span>
               <span className="mt-0.5 text-[10px] text-ilo-ink/70">{sub}</span>
               <ArrowUpRight className="absolute bottom-2.5 right-2.5 h-3.5 w-3.5 text-ilo-plum" />
-            </a>
+            </Link>
           </li>
         ))}
       </ul>

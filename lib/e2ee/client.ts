@@ -3,13 +3,12 @@ import { decryptBlob, decryptMessage, encryptBlob, encryptMessage, MAX_BODY_CHAR
 import { archiveKeyFrom, generateKeypair, publicFromSecret, unwrapSecretKey, wrapSecretKey, type KeyBackup, type Keypair } from "./keys";
 import { generateRecoveryCode } from "./recovery";
 import { fromB64, getSodium, toB64 } from "./sodium";
-import { Store, type Message, type Summary } from "./store";
-import { notesKeyFrom } from "./keys"
+import { Store, type Message, type SignalVote, type Summary } from "./store";
+import { notesKeyFrom } from "./keys";
 import { safetyCode } from "./safety";
 import { chooseNote } from "./notes";
 
-
-export type { Message, Status, Summary } from "./store";
+export type { Message, MessageSignal, SignalVote, Status, Summary } from "./store";
 
 // What the app should show the person right now
 export type E2EEState =
@@ -41,6 +40,7 @@ export class E2EEClient {
   private collecting: Promise<void> | null = null;
   private backupTimer: ReturnType<typeof setTimeout> | null = null;
   private pending: { kp: Keypair; code: string; rotate: boolean } | null = null;
+  private unscored: { id: string; body: string }[] = [];
   // Mail that could not be opened is reported here and left on the server rather than being acknowledged
   issues: { rowId: string; reason: string }[] = [];
 
@@ -294,7 +294,10 @@ export class E2EEClient {
             { id: row.client_id, conversationId: row.conversation_id, mine: false, body: out.body, at: Date.parse(row.created_at), status: "received" },
             { ifAbsent: true },
           );
-          if (added) touched.add(row.conversation_id);
+          if (added) {
+            touched.add(row.conversation_id);
+            if (out.body.trim()) this.unscored.push({ id: row.client_id, body: out.body });
+          }
           ackIds.push(row.id); // saved (now or earlier), so safe to release
         } catch (e) {
           this.badRows.add(row.id);
@@ -347,6 +350,20 @@ export class E2EEClient {
   }
 
   messages(conversationId: string) { return this.store.list(conversationId); }
+
+  // Plaintext waiting for an on-device score. The mailbox is already acknowledged.
+  drainUnscored() { return this.unscored.splice(0); }
+
+  async saveSignal(id: string, scores: number[]) {
+    const conversationId = await this.store.putSignal(false, id, scores);
+    if (!conversationId) return;
+    this.listeners.forEach((cb) => cb(conversationId));
+  }
+
+  signalEnabled() { return this.store.getSignalEnabled(); }
+  setSignalEnabled(on: boolean) { return this.store.setSignalEnabled(on); }
+  signalVotes() { return this.store.getSignalVotes(); }
+  setSignalVote(id: string, vote: SignalVote | null) { return this.store.setSignalVote(id, vote); }
   summaries(): Promise<Record<string, Summary>> { return this.store.summaries(); }
   async sealText(text: string): Promise<{ ciphertext: string; nonce: string }> {
     return encryptBlob(new TextEncoder().encode(text), await notesKeyFrom(this.sk()));

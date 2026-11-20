@@ -8,17 +8,26 @@ import { createClient } from "@/lib/supabase/server";
 export default async function SessionsPage() {
   const supabase = await createClient();
 
-  // Row-level security: a student only ever gets their own appointments
-  const [{ data: rows }, primary] = await Promise.all([
-    supabase
-      .from("appointments")
-      .select("id, counsellor_id, starts_at, ends_at, mode, status, student_note, counsellor:counsellors(display_name, qualification, designation, room)")
-      .order("starts_at", { ascending: true }),
-    getMyCounsellor<{ display_name: string }>(supabase, "display_name"),
-  ]);
+  // Row-level security: a student only ever gets their own appointments. The note text is not selected.
+  const withSeal = "id, counsellor_id, starts_at, ends_at, mode, status, student_note_ciphertext, counsellor:counsellors(display_name, qualification, designation, room)";
+  const sealedRes = await supabase.from("appointments").select(withSeal).order("starts_at", { ascending: true });
+  const plainRes = sealedRes.error
+    ? await supabase.from("appointments").select("id, counsellor_id, starts_at, ends_at, mode, status, counsellor:counsellors(display_name, qualification, designation, room)").order("starts_at", { ascending: true })
+    : null;
+  const rows = (plainRes ?? sealedRes).data;
+  const primary = await getMyCounsellor<{ display_name: string }>(supabase, "display_name");
 
   const nowMs = Date.now();
-  const all = (rows ?? []) as unknown as SessionRow[];
+  const all = ((rows ?? []) as unknown as (SessionRow & { student_note_ciphertext?: string | null })[]).map((row) => ({
+    id: row.id,
+    counsellor_id: row.counsellor_id,
+    starts_at: row.starts_at,
+    ends_at: row.ends_at,
+    mode: row.mode,
+    status: row.status,
+    counsellor: row.counsellor,
+    hasPrivateNote: Boolean(row.student_note_ciphertext),
+  }));
   const upcoming = all.filter((s) => s.status === "confirmed" && Date.parse(s.ends_at) > nowMs);
   const past = all
     .filter((s) => !upcoming.includes(s))

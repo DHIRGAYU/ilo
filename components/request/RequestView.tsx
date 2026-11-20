@@ -103,7 +103,7 @@ function RequestInner({ counsellor, latest }: Props) {
           <p className="mt-2 text-xs leading-relaxed text-ilo-ink">{text.body}</p>
           {sentUrgent && <p className="mt-3 text-xs font-semibold text-ilo-crisis">We&apos;ve marked it as urgent for {counsellor.shortName}.</p>}
           <div className="mt-4 flex flex-wrap justify-center gap-2">
-            {(state === "accepted" || state === "referred") && <Link href="/messages" className={`rounded-full bg-ilo-plum px-5 py-2.5 text-xs font-bold text-white ${focus}`}>Open messages</Link>}
+            {state !== "closed" && <Link href="/messages" className={`rounded-full bg-ilo-plum px-5 py-2.5 text-xs font-bold text-white ${focus}`}>Open messages</Link>}
             {state === "accepted" && <Link href="/sessions/book" className={`rounded-full border border-ilo-plum/25 px-5 py-2.5 text-xs font-semibold text-ilo-plum ${focus}`}>Book a session</Link>}
             <Link href="/home" className={`rounded-full border border-ilo-plum/25 px-5 py-2.5 text-xs font-semibold text-ilo-plum ${focus}`}>Back home</Link>
           </div>

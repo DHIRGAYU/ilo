@@ -3,7 +3,14 @@ import { studentAlias, studentLabel } from "@/lib/counsellor-day";
 import { DAY_MS, parseAvailability, type Availability, type CalAppt, type Mode, type Outcome, type Status, type StudentOption } from "@/lib/schedule-shared";
 import { createClient } from "@/lib/supabase/server";
 
-type ApptRow = { id: string; student_id: string; starts_at: string; ends_at: string; mode: Mode; status: Status; student_note: string | null };
+type ApptRow = {
+  id: string; student_id: string; starts_at: string; ends_at: string; mode: Mode; status: Status;
+  student_note: string | null;
+  student_note_ciphertext?: string | null;
+  student_note_nonce?: string | null;
+  student_note_sender_key?: string | null;
+  student_note_id?: string | null;
+};
 type RecRow = { appointment_id: string; outcome: Outcome | null; follow_up: boolean };
 type ConvRow = { id: string; student_id: string };
 
@@ -12,12 +19,16 @@ async function loadBase() {
   const ws = await getWorkspace();
   if (!ws) return null;
   const supabase = await createClient();
-  const [apptRes, recRes, convRes] = await Promise.all([
-    supabase.from("appointments").select("id, student_id, starts_at, ends_at, mode, status, student_note").eq("counsellor_id", ws.me.id).order("starts_at", { ascending: true }).limit(1000),
+  const sealedSelect = "id, student_id, starts_at, ends_at, mode, status, student_note, student_note_ciphertext, student_note_nonce, student_note_sender_key, student_note_id";
+  const sealedRes = await supabase.from("appointments").select(sealedSelect).eq("counsellor_id", ws.me.id).order("starts_at", { ascending: true }).limit(1000);
+  const plainRes = sealedRes.error
+    ? await supabase.from("appointments").select("id, student_id, starts_at, ends_at, mode, status, student_note").eq("counsellor_id", ws.me.id).order("starts_at", { ascending: true }).limit(1000)
+    : null;
+  const [recRes, convRes] = await Promise.all([
     supabase.from("session_records").select("appointment_id, outcome, follow_up").eq("counsellor_id", ws.me.id),
     supabase.from("conversations").select("id, student_id").eq("counsellor_id", ws.me.id),
   ]);
-  const rows = (apptRes.data ?? []) as ApptRow[];
+  const rows = ((plainRes ?? sealedRes).data ?? []) as ApptRow[];
   // If the 0016 migration has not been run yet the screens still open, without outcomes and notes
   const recordsReady = !recRes.error;
   const recs = new Map(((recRes.error ? [] : recRes.data ?? []) as RecRow[]).map((r) => [r.appointment_id, r]));
@@ -33,10 +44,13 @@ async function loadBase() {
   const toCal = (r: ApptRow): CalAppt => {
     const startMs = Date.parse(r.starts_at);
     const rec = recs.get(r.id);
+    const bookingNote = r.student_note_ciphertext && r.student_note_nonce
+      ? { ciphertext: r.student_note_ciphertext, nonce: r.student_note_nonce, senderKey: r.student_note_sender_key ?? null, clientId: r.student_note_id ?? null }
+      : null;
     return {
       id: r.id, studentId: r.student_id, studentLabel: studentLabel(r.student_id, ws.names), startMs, endMs: Date.parse(r.ends_at),
       mode: r.mode, status: r.status, kind: firstStart.get(r.student_id) === startMs ? "First conversation" : "Follow-up",
-      studentNote: r.student_note, outcome: rec?.outcome ?? null, followUp: rec?.follow_up ?? false,
+      bookingNote, legacyBookingNote: bookingNote ? null : r.student_note, outcome: rec?.outcome ?? null, followUp: rec?.follow_up ?? false,
     };
   };
   return { ws, supabase, rows, recs, convs, recordsReady, toCal };

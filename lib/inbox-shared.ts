@@ -1,5 +1,5 @@
 import { dayLabel, timeLabel } from "@/lib/chat";
-import type { Message, Status } from "@/lib/e2ee";
+import type { Message, MessageSignal, Status } from "@/lib/e2ee";
 
 // Types and small helpers shared by the inbox page (server) and its components (client).
 // Nothing here touches the database. All times are Indian Standard Time.
@@ -10,7 +10,7 @@ const wdF = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" })
 const whenF = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short", day: "numeric", month: "short" });
 
 export type Role = "student" | "counsellor";
-export type Msg = { id: string; key: string; mine: boolean; body: string; at: number; status: Status; reason?: string };
+export type Msg = { id: string; key: string; mine: boolean; body: string; at: number; status: Status; reason?: string; signal?: MessageSignal };
 export type InboxEvent = { id: string; at: number; text: string };
 export type NextSession = { startMs: number; endMs: number; mode: "in_person" | "video" | "phone" };
 
@@ -29,7 +29,9 @@ export type InboxConvo = {
   urgent: boolean;
   archived: boolean;
   resolved: boolean;
-  note: string;
+  note: string; // opened on this device; the server copy is sealed
+  sealedNote: { ciphertext: string; nonce: string } | null;
+  legacyNote: string | null; // an old clear note, present once so this device can seal it
   sessionsHeld: number;
   next: NextSession | null;
   events: InboxEvent[];
@@ -45,7 +47,7 @@ export const FILTERS: { id: Filter; label: string }[] = [
 ];
 
 // A message from this device's own store. "mine" here means sent by the counsellor.
-export const fromStore = (m: Message): Msg => ({ id: m.id, key: `${m.mine ? "m" : "r"}-${m.id}`, mine: m.mine, body: m.body, at: m.at, status: m.status, reason: m.reason });
+export const fromStore = (m: Message): Msg => ({ id: m.id, key: `${m.mine ? "m" : "r"}-${m.id}`, mine: m.mine, body: m.body, at: m.at, status: m.status, reason: m.reason, signal: m.signal });
 
 export function failText(reason?: string) {
   switch (reason) {

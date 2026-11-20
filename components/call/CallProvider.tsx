@@ -1,22 +1,41 @@
 "use client";
-// Daily errors are plain objects, so pull out the readable message instead of printing "{}"
-const describe = (x: unknown) => {
-  if (x instanceof Error) return x.message;
-  if (typeof x === "string") return x;
-  const o = x as { errorMsg?: string; error?: { type?: string; msg?: string }; message?: string } | null;
-  return o?.errorMsg ?? o?.error?.msg ?? o?.message ?? JSON.stringify(x);
-};
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Lock, PhoneOff } from "lucide-react";
 import type { DailyCall } from "@daily-co/daily-js";
 import { createClient } from "@/lib/supabase/client";
+import { appendPhrase, speakerFor } from "@/lib/session-hunch/call-turns";
+import { scoreSession } from "@/lib/session-hunch/engine";
+import type { Hunch, Turn } from "@/lib/session-hunch/hunch";
 
 type Role = "student" | "counsellor";
 type Kind = "audio" | "video";
 type Phase = "idle" | "starting" | "outgoing" | "incoming" | "connecting" | "incall" | "notice";
 type ActiveCall = { id: string; kind: Kind; peer: string };
-type Notice = { title: string; body?: string; help?: boolean };
+type Notice = { title: string; body?: string; help?: boolean; hold?: boolean; hunch?: Hunch };
+
+const percent = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 0 });
+const NO_SPEECH = "The call ended. There wasn't enough of the student's speech to form a hunch.";
+const NO_WORDS = "The call ended. The words from the call weren't available, so there's no hunch.";
+
+function SessionReport({ hunch }: { hunch: Hunch }) {
+  const crisis = hunch.label === "Suicidal";
+  return (
+    <div className="mt-3">
+      <p className={`text-sm font-semibold ${crisis ? "text-ilo-crisis" : "text-ilo-deep"}`}>
+        {hunch.display} <span className="font-medium text-ilo-ink/60">{percent.format(hunch.probability)}</span>
+      </p>
+      {hunch.topic && <p className="mt-2 text-xs font-semibold text-ilo-deep">{hunch.topic}</p>}
+      {hunch.followup && <p className="mt-1 text-xs leading-relaxed text-ilo-ink/80">{hunch.followup}</p>}
+      <p className="mt-3 text-[10px] leading-snug text-ilo-ink/60">A cue from this call, on this device. Not saved. Not a diagnosis.</p>
+      {crisis && (
+        <p className="mt-1 text-[10px] leading-snug text-ilo-crisis">
+          If the student may be in immediate danger, use Escalate and call <a href="tel:14416" className="font-bold underline">Tele-MANAS 14416</a>.
+        </p>
+      )}
+    </div>
+  );
+}
 export type StartArgs = { conversationId?: string; counsellorId?: string; appointmentId?: string; kind: Kind };
 type CallRow = { id: string; status: string; initiator_id: string };
 
@@ -54,6 +73,11 @@ export function CallProvider({ role, children }: { role: Role; children: React.R
   const pollTimer = useRef<number | null>(null);
   const noticeTimer = useRef<number | null>(null);
   const joiningRef = useRef<string | null>(null); // the call we are already opening a screen for
+  const joinedRef = useRef(false);
+  const spokenRef = useRef<Turn[]>([]);
+  const hearingRef = useRef(false);
+  const transcriptionFailedRef = useRef(false);
+  const reportToken = useRef(0);
 
   const setPhase = (p: Phase) => { phaseRef.current = p; setPhaseState(p); };
   const setCall = (c: ActiveCall | null) => { callRef.current = c; setCallState(c); };
@@ -69,23 +93,64 @@ export function CallProvider({ role, children }: { role: Role; children: React.R
     frameRef.current = null;
     if (f) f.destroy().catch(() => { });
   };
-  const reset = () => { joiningRef.current = null; clearTimers(); destroyFrame(); setSession(null); setCall(null); setPhase("idle"); };
-  const closeNotice = () => { setNotice(null); setPhase("idle"); };
+  const clearSpeech = () => {
+    joinedRef.current = false;
+    spokenRef.current = [];
+    hearingRef.current = false;
+    transcriptionFailedRef.current = false;
+  };
+  const reset = () => { joiningRef.current = null; clearSpeech(); clearTimers(); destroyFrame(); setSession(null); setCall(null); setPhase("idle"); reportToken.current += 1; };
+  const closeNotice = () => { reportToken.current += 1; setNotice(null); setPhase("idle"); };
 
   // Ends the call on screen and tells the other side, then shows a short message
   const finish = (n: Notice, endOnServer = true) => {
     const c = callRef.current;
     if (!c) return; // already finished
+    const reportThis = role === "counsellor" && joinedRef.current;
+    const turns = spokenRef.current;
+    const failed = transcriptionFailedRef.current;
+    const frame = frameRef.current;
+    if (hearingRef.current && frame) {
+      try { frame.stopTranscription(); } catch { /* the frame may already be leaving */ }
+    }
     joiningRef.current = null;
+    clearSpeech();
     clearTimers();
     destroyFrame();
     setSession(null);
     setCall(null);
     if (endOnServer) fire(supabase.rpc("end_call", { p_call_id: c.id }));
-    setNotice(n);
-    setPhase("notice");
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-    if (!n.help) noticeTimer.current = window.setTimeout(() => { if (phaseRef.current === "notice") closeNotice(); }, 4000);
+    if (!reportThis) {
+      setNotice(n);
+      setPhase("notice");
+      if (!n.help && !n.hold) noticeTimer.current = window.setTimeout(() => { if (phaseRef.current === "notice") closeNotice(); }, 4000);
+      return;
+    }
+    const token = reportToken.current + 1;
+    reportToken.current = token;
+    const hasStudent = turns.some((turn) => turn.speaker === "student" && turn.text.trim());
+    const show = (next: Notice) => {
+      if (reportToken.current !== token || phaseRef.current !== "notice") return;
+      setNotice(next);
+    };
+    if (turns.length === 0 && failed) {
+      setNotice({ title: "Session report", body: NO_WORDS, hold: true });
+      setPhase("notice");
+      return;
+    }
+    if (!hasStudent) {
+      setNotice({ title: "Session report", body: NO_SPEECH, hold: true });
+      setPhase("notice");
+      return;
+    }
+    setNotice({ title: "Session report", body: "Reading this call…", hold: true });
+    setPhase("notice");
+    void scoreSession(turns).then((hunch) => {
+      show(hunch
+        ? { title: "Session report", hold: true, hunch }
+        : { title: "Session report", body: NO_SPEECH, hold: true });
+    });
   };
 
   const noAnswer = (c: ActiveCall): Notice => ({ title: "No answer", body: `${c.peer} isn't available right now.`, help: role === "student" });
@@ -273,6 +338,7 @@ export function CallProvider({ role, children }: { role: Role; children: React.R
         return;
       }
       frameRef.current = frame;
+      holder.current.querySelector("iframe")?.setAttribute("allow", "camera; microphone; autoplay; fullscreen");
       const mine = () => frameRef.current === frame; // ignore events from a screen that was already closed
       frame
         .on("left-meeting", () => { if (mine()) finish({ title: "Call ended" }); })
@@ -280,12 +346,41 @@ export function CallProvider({ role, children }: { role: Role; children: React.R
           // a call is only two people: when the other one leaves, we leave too
           if (mine() && e && !e.participant.local) window.setTimeout(() => { if (mine()) frame.leave().catch(() => { }); }, 1500);
         })
-        .on("error", (e) => { console.error("[call] Daily error:", describe(e)); if (mine()) finish({ title: "The call was interrupted", body: `Please try again. (${describe(e)})` }); }); try {
-          await frame.join({ url: sessionUrl, token: sessionToken });
-        } catch (err) {
-          console.error("[call] join failed:", describe(err));
-          if (mine()) finish({ title: "Couldn't connect", body: `${describe(err)}` });
+        .on("error", () => { if (mine()) finish({ title: "The call was interrupted", body: "Please try again." }); });
+      try {
+        await frame.join({ url: sessionUrl, token: sessionToken });
+      } catch {
+        if (mine()) finish({ title: "Couldn't connect", body: "Please try again, or send a message instead." });
+        return;
+      }
+      if (!mine()) return;
+      joinedRef.current = true;
+      spokenRef.current = [];
+      transcriptionFailedRef.current = false;
+      if (role === "counsellor") {
+        frame
+          .on("transcription-message", (event) => {
+            if (!mine()) return;
+            const localId = frame.participants().local.session_id;
+            if (!localId) return;
+            const speaker = speakerFor(event.participantId, localId);
+            if (!speaker) return;
+            spokenRef.current = appendPhrase(spokenRef.current, speaker, event.text);
+          })
+          .on("transcription-error", () => { if (mine()) transcriptionFailedRef.current = true; });
+        try {
+          frame.startTranscription({ language: "en", punctuate: true });
+          hearingRef.current = true;
+        } catch {
+          transcriptionFailedRef.current = true;
         }
+      }
+      try {
+        await frame.setLocalAudio(true);
+        if (callRef.current?.kind !== "audio") await frame.setLocalVideo(true);
+      } catch {
+        // The room is already open. The call controls can turn a device on if this attempt was refused.
+      }
     })().catch(() => finish({ title: "Couldn't start the call", body: "Please try again, or send a message instead." }));
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -346,9 +441,10 @@ export function CallProvider({ role, children }: { role: Role; children: React.R
 
       {phase === "notice" && notice && (
         <div role="alertdialog" aria-labelledby="call-notice" className="fixed inset-0 z-[70] flex items-center justify-center bg-ilo-deep/60 px-6">
-          <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
-            <h2 id="call-notice" className="font-display text-xl text-ilo-plum">{notice.title}</h2>
+          <div className={`w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl ${notice.hunch ? "text-left" : "text-center"}`}>
+            <h2 id="call-notice" className={`font-display text-xl text-ilo-plum ${notice.hunch ? "text-center" : ""}`}>{notice.title}</h2>
             {notice.body && <p className="mt-2 text-xs leading-relaxed text-ilo-ink/80">{notice.body}</p>}
+            {notice.hunch && <SessionReport hunch={notice.hunch} />}
             {notice.help && (
               <>
                 <p className="mt-3 text-xs leading-relaxed text-ilo-ink/80">

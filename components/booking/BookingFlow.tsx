@@ -3,10 +3,20 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Clock, Lock, MapPin, Phone, Video } from "lucide-react";
+import { useE2EE } from "@/components/e2ee/E2EEProvider";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { dayList, formatWhen, slotsForDay, type AvailSlot } from "@/lib/booking";
 import { shortName } from "@/lib/sessions";
+
+const NOTE_KEY = "ilo-unsent-booking-note";
+const missingFn = (message: string) => /could not find the function|schema cache|PGRST202/i.test(message);
+
+function counsellorPublicKey(data: unknown): string | null {
+  const row = Array.isArray(data) ? data[0] : data;
+  const key = (row as { public_key?: string } | null)?.public_key;
+  return key || null;
+}
 
 export type ModeId = "in_person" | "video" | "phone";
 export type CounsellorOption = {
@@ -44,7 +54,18 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [noteHeld, setNoteHeld] = useState(false);
+  const { client, state } = useE2EE();
   const off = reschedule ? 0 : 1; // steps are numbered from the date when rescheduling
+
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(NOTE_KEY);
+      if (saved) setNote(saved);
+    } catch {
+      // Private browsing can block session storage. The note still lives in this form until it is sent.
+    }
+  }, []);
 
   const counsellor = counsellors.find((c) => c.id === cid);
   const avail = counsellor?.counsellor_availability ?? [];
@@ -79,9 +100,47 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
     setError(null);
     const supabase = createClient();
     const startsAt = new Date(slotMs).toISOString();
-    const { error } = reschedule
+    const trimmed = note.trim();
+    let held = false;
+    let sealed: { ciphertext: string; nonce: string; senderKey: string; clientId: string } | null = null;
+    if (!reschedule && trimmed) {
+      try {
+        const key = state === "ready" && client
+          ? counsellorPublicKey((await supabase.rpc("get_counsellor_public_key", { p_counsellor_id: cid })).data)
+          : null;
+        const { data: auth } = await supabase.auth.getUser();
+        const { data: mine } = key
+          ? await supabase.from("user_keys").select("public_key").eq("user_id", auth.user?.id ?? "").maybeSingle()
+          : { data: null };
+        if (client && key && mine?.public_key) {
+          const id = crypto.randomUUID();
+          const box = await client.sealFor(id, trimmed.slice(0, 500), key);
+          sealed = { ciphertext: box.ciphertext, nonce: box.nonce, senderKey: mine.public_key as string, clientId: id };
+        } else {
+          held = true;
+          try { sessionStorage.setItem(NOTE_KEY, trimmed); } catch { /* shown on the confirmation screen instead */ }
+        }
+      } catch {
+        held = true;
+        try { sessionStorage.setItem(NOTE_KEY, trimmed); } catch { /* shown on the confirmation screen instead */ }
+      }
+    }
+    let { error } = reschedule
       ? await supabase.rpc("reschedule_appointment", { p_appointment_id: reschedule.id, p_starts_at: startsAt })
-      : await supabase.rpc("book_appointment", { p_counsellor_id: cid, p_starts_at: startsAt, p_mode: mode, p_note: note.trim() || null });
+      : await supabase.rpc("book_appointment", {
+        p_counsellor_id: cid,
+        p_starts_at: startsAt,
+        p_mode: mode,
+        p_note_ciphertext: sealed?.ciphertext ?? null,
+        p_note_nonce: sealed?.nonce ?? null,
+        p_note_sender_key: sealed?.senderKey ?? null,
+        p_note_id: sealed?.clientId ?? null,
+      });
+    if (!reschedule && error && missingFn(error.message)) {
+      held = held || Boolean(trimmed);
+      const again = await supabase.rpc("book_appointment", { p_counsellor_id: cid, p_starts_at: startsAt, p_mode: mode, p_note: null });
+      error = again.error;
+    }
     setSubmitting(false);
     if (error) {
       if (/slot_taken|slot_unavailable/.test(error.message)) {
@@ -95,11 +154,15 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
       }
       return;
     }
+    setNoteHeld(held);
+    if (sealed) {
+      try { sessionStorage.removeItem(NOTE_KEY); } catch { /* the note is already sealed on the server */ }
+    }
     setDone(formatWhen(slotMs));
   }
 
   const header = (
-    <header className="sticky top-0 z-10 grid grid-cols-[1fr_auto_1fr] items-center border-b border-ilo-plum/10 bg-ilo-bg/95 px-4 pb-3 pt-7 backdrop-blur">
+    <header className="sticky top-0 z-10 grid shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-ilo-plum/10 bg-ilo-bg/95 px-4 pb-3 pt-7 backdrop-blur">
       <Link href={reschedule ? "/sessions" : "/home"} className="flex w-fit items-center gap-0.5 text-xs text-ilo-ink">
         <ChevronLeft className="h-4 w-4" /> Back
       </Link>
@@ -110,7 +173,7 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
 
   if (!counsellors.length) {
     return (
-      <main className="min-h-full">
+      <main className="absolute inset-0 overflow-y-auto">
         {header}
         <p className="px-4 py-8 text-center text-sm text-ilo-ink">Your college hasn&apos;t added a counsellor yet. Please check back soon.</p>
       </main>
@@ -120,7 +183,7 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
   if (done && counsellor) {
     const m = MODES.find((x) => x.id === mode)!;
     return (
-      <main className="min-h-full">
+      <main className="absolute inset-0 overflow-y-auto">
         {header}
         <div className="px-6 pt-10 text-center">
           <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-ilo-plum text-white">
@@ -135,6 +198,9 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
             </p>
           </div>
           <p className="mt-4 text-[11px] text-ilo-ink/70">Your college sees that counselling happened. Never who. Never what was said.</p>
+          {noteHeld && (
+            <p className="mt-3 text-xs leading-relaxed text-ilo-plum">Your note stayed on this device and was not sent. Turn on secure messaging, then include it when you book if you want your counsellor to read it.</p>
+          )}
           <Link href="/sessions" className="mt-6 flex h-11 items-center justify-center rounded-full bg-ilo-plum text-xs font-bold uppercase tracking-wide text-white">
             View my sessions
           </Link>
@@ -144,11 +210,14 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
     );
   }
 
+  const chosen = slotMs == null ? null : formatWhen(slotMs);
+  const modeLabel = MODES.find((item) => item.id === mode)?.label;
+
   return (
-    <main className="relative flex min-h-full flex-col">
+    <main className="absolute inset-0 flex flex-col">
       {header}
 
-      <div className="flex-1 space-y-5 px-4 pb-4 pt-4">
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pb-4 pt-4">
         {reschedule && (
           <p className="rounded-xl border border-ilo-plum/15 bg-ilo-blush p-3 text-xs text-ilo-ink">
             Rescheduling with <strong className="text-ilo-plum">{counsellor?.display_name}</strong>. Currently {reschedule.whenLabel}.
@@ -169,7 +238,7 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
                     onClick={() => pickCounsellor(c)}
                     className={`relative w-full rounded-xl border p-3 pr-9 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-ilo-plum ${on ? "border-ilo-plum bg-ilo-blush" : "border-ilo-plum/10 bg-white"}`}
                   >
-                    <p className="text-xs font-bold text-ilo-plum">{c.display_name}</p>
+                    <p className="text-xs font-bold text-ilo-plum">{c.display_name}{on ? <span className="ml-2 rounded-full bg-ilo-plum px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">Selected</span> : null}</p>
                     <p className="mt-0.5 text-[11px] leading-snug text-ilo-ink">
                       {[c.designation, c.languages.join(", ")].filter(Boolean).join(" · ")}
                     </p>
@@ -238,7 +307,7 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
                       }`}
                   >
                     <span className="flex items-center gap-1 text-xs font-bold"><Clock className="h-3 w-3" /> {s.label}</span>
-                    <span className="text-[9px]">{taken ? "Reserved" : "Open slot"}</span>
+                    <span className="text-[9px]">{taken ? "Reserved" : on ? "Selected" : "Open slot"}</span>
                   </button>
                 );
               })}
@@ -276,26 +345,37 @@ export function BookingFlow({ counsellors, nowMs, initialMode, reschedule }: { c
               <textarea
                 aria-labelledby="s5"
                 value={note}
-                onChange={(e) => setNote(e.target.value)}
+                onChange={(e) => {
+                  setNote(e.target.value);
+                  try {
+                    if (e.target.value.trim()) sessionStorage.setItem(NOTE_KEY, e.target.value);
+                    else sessionStorage.removeItem(NOTE_KEY);
+                  } catch {
+                    // The note remains in the form if this browser blocks storage.
+                  }
+                }}
                 maxLength={500}
                 rows={3}
                 placeholder={`Anything you'd like ${counsellor ? shortName(counsellor.display_name) : "your counsellor"} to know beforehand?`}
                 className="mt-2 w-full resize-none rounded-xl border border-ilo-plum/15 bg-white p-3 text-xs text-ilo-ink placeholder:text-ilo-ink/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ilo-plum"
               />
-              <p className="mt-1 flex justify-between text-[10px] text-ilo-ink/60"><span>Only your counsellor can read this.</span><span>{note.length}/500</span></p>
+              <p className="mt-1 flex justify-between text-[10px] text-ilo-ink/60"><span>Locked for your counsellor before it is sent. If secure messaging is off, it stays on this device.</span><span>{note.length}/500</span></p>
             </section>
           </>
         )}
       </div>
 
-      <div className="sticky bottom-0 z-10 space-y-2 border-t border-ilo-plum/10 bg-ilo-bg/95 p-3 backdrop-blur">
+      <div className="shrink-0 space-y-2 border-t border-ilo-plum/10 bg-ilo-bg p-3">
         {error && <p role="alert" className="text-center text-xs font-medium text-ilo-crisis">{error}</p>}
+        <p className="text-center text-[11px] text-ilo-ink/70" aria-live="polite">
+          {chosen ? `${chosen} · ${modeLabel}` : "Choose an open time to continue."}
+        </p>
         <Button
           onClick={confirm}
           disabled={slotMs == null || submitting}
           className="h-11 w-full rounded-full bg-ilo-plum text-[11px] font-bold uppercase tracking-wide text-white hover:bg-ilo-plum/90"
         >
-          {submitting ? "Booking…" : <>{reschedule ? "Confirm new time" : "Confirm confidential booking"} <ChevronRight className="ml-1 h-4 w-4" /></>}
+          {submitting ? "Booking…" : slotMs == null ? "Choose a time" : <>{reschedule ? "Confirm new time" : "Confirm confidential booking"} <ChevronRight className="ml-1 h-4 w-4" /></>}
         </Button>
         <p className="flex items-center gap-2 rounded-lg border border-ilo-plum/10 bg-white/80 px-3 py-2 text-[10px] leading-snug text-ilo-ink">
           <Lock className="h-3 w-3 shrink-0" />

@@ -2,7 +2,11 @@
 // Everything sensitive is locked with a device key that the browser keeps non-extractable, so a copy of the
 // raw database file is useless on its own. This does not protect against malicious scripts running in the page.
 
+import { packSignal, topLabel, unpackSignal, type Label } from "@/lib/mental-health/score";
+
 export type Status = "queued" | "sending" | "sent" | "delivered" | "expired" | "failed" | "received";
+export type SignalVote = "up" | "down";
+export type MessageSignal = { label: Label; scores: number[] };
 export type Message = {
   id: string;              // the sender's client id (a uuid)
   conversationId: string;
@@ -11,6 +15,7 @@ export type Message = {
   at: number;              // milliseconds; the server's time once known
   status: Status;
   reason?: string;         // why a send failed, e.g. "recipient_no_key"
+  signal?: MessageSignal;  // on-device score. Never included in the encrypted archive.
 };
 export type Summary = {
   lastBody: string; lastMine: boolean; lastAt: number; lastStatus: Status; firstAt: number;
@@ -19,8 +24,7 @@ export type Summary = {
   hasMine: boolean;      // I have written at least once
 };
 type Sealed = { iv: Uint8Array; ct: Uint8Array };
-
-type Row = { key: string; id: string; conversationId: string; mine: boolean; at: number; status: Status; reason?: string; archived: 0 | 1; body: Sealed };
+type Row = { key: string; id: string; conversationId: string; mine: boolean; at: number; status: Status; reason?: string; archived: 0 | 1; body: Sealed; signal?: Sealed };
 export type Identity = { userId: string; deviceId: string; publicKey: string; keyVersion: number; sealedSecret: Sealed };
 
 export type StoredNote = { text: string; updatedAt: number; dirty: boolean; syncedNonce: string | null };
@@ -100,8 +104,53 @@ export class Store {
   async getLastSeq(conversationId: string) { return ((await req(this.meta().objectStore("meta").get(`seq:${conversationId}`))) as number | undefined) ?? 0; }
   async setLastSeq(conversationId: string, seq: number) { const tx = this.meta("readwrite"); tx.objectStore("meta").put(seq, `seq:${conversationId}`); await done(tx); }
 
+  async getSignalEnabled() {
+    const value = await req(this.meta().objectStore("meta").get("signalEnabled"));
+    return value !== false;
+  }
+  async setSignalEnabled(on: boolean) {
+    const tx = this.meta("readwrite");
+    tx.objectStore("meta").put(on, "signalEnabled");
+    await done(tx);
+  }
+  async getSignalVotes(): Promise<Record<string, SignalVote>> {
+    return ((await req(this.meta().objectStore("meta").get("signalVotes"))) as Record<string, SignalVote> | undefined) ?? {};
+  }
+  async setSignalVote(id: string, vote: SignalVote | null) {
+    const tx = this.meta("readwrite");
+    const st = tx.objectStore("meta");
+    const votes = ((await req(st.get("signalVotes"))) as Record<string, SignalVote> | undefined) ?? {};
+    if (vote) votes[id] = vote;
+    else delete votes[id];
+    st.put(votes, "signalVotes");
+    await done(tx);
+  }
+
   private async toMessage(r: Row): Promise<Message> {
-    return { id: r.id, conversationId: r.conversationId, mine: r.mine, at: r.at, status: r.status, reason: r.reason, body: dec.decode(await this.open(r.body)) };
+    let signal: MessageSignal | undefined;
+    if (r.signal) {
+      try {
+        const scores = unpackSignal(dec.decode(await this.open(r.signal)));
+        if (scores) signal = { label: topLabel(scores), scores };
+      } catch {
+        signal = undefined;
+      }
+    }
+    return { id: r.id, conversationId: r.conversationId, mine: r.mine, at: r.at, status: r.status, reason: r.reason, body: dec.decode(await this.open(r.body)), signal };
+  }
+
+  // Attaches a score without changing archive state, so the label is never uploaded.
+  async putSignal(mine: boolean, id: string, scores: number[]): Promise<string | undefined> {
+    const signal = await this.seal(enc.encode(packSignal(scores)));
+    const tx = this.msgs("readwrite");
+    const st = tx.objectStore("messages");
+    const r = (await req(st.get(keyOf(mine, id)))) as Row | undefined;
+    if (r) {
+      r.signal = signal;
+      st.put(r);
+    }
+    await done(tx);
+    return r?.conversationId;
   }
 
   async getMessage(mine: boolean, id: string): Promise<Message | undefined> {

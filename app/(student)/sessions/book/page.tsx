@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { BookingFlow, type CounsellorOption, type ModeId, type RescheduleInfo } from "@/components/booking/BookingFlow";
+import { E2EEProvider } from "@/components/e2ee/E2EEProvider";
 import { getMyPrefs, rankCounsellors } from "@/lib/counsellors";
 import { createClient } from "@/lib/supabase/server";
 import { canChange, friendlyWhen } from "@/lib/sessions";
@@ -38,5 +39,12 @@ export default async function BookSessionPage({ searchParams }: { searchParams: 
     if (i > 0) list = [list[i], ...list.slice(0, i), ...list.slice(i + 1)];
   }
 
-  return <BookingFlow counsellors={list} nowMs={nowMs} initialMode={initialMode} reschedule={info} />;
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  return (
+    <E2EEProvider userId={user.id}>
+      <BookingFlow counsellors={list} nowMs={nowMs} initialMode={initialMode} reschedule={info} />
+    </E2EEProvider>
+  );
 }

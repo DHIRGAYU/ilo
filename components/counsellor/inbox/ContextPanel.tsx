@@ -4,6 +4,9 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { CalendarClock, Lock, X } from "lucide-react";
 import { MODE_LABEL } from "@/lib/counsellor-day";
 import { dateLabel, listTime, rowTag, whenLabel, type InboxConvo } from "@/lib/inbox-shared";
+import type { HunchState } from "@/lib/session-hunch/engine";
+
+const percent = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 0 });
 
 const card = "rounded-2xl border border-ilo-plum/10 bg-white p-4";
 const eyebrow = "text-[10px] font-bold uppercase tracking-[0.14em] text-ilo-ink/60";
@@ -57,7 +60,45 @@ function NoteBox({ id, initial, save }: { id: string; initial: string; save: (id
   );
 }
 
-export function ContextPanel({ convo, saveNote, nowMs, onClose }: { convo: InboxConvo; saveNote: (id: string, text: string) => Promise<boolean>; nowMs: number; onClose?: () => void }) {
+function HunchCard({ hunch }: { hunch: HunchState }) {
+  if (hunch.phase === "off") return null;
+  const value = hunch.value;
+  const crisis = value?.label === "Suicidal";
+  return (
+    <section className={card} aria-labelledby="hunch-title">
+      <div className="flex items-center justify-between gap-3">
+        <h3 id="hunch-title" className={eyebrow}>Session hunch</h3>
+        <span className="flex items-center gap-1 text-[10px] text-ilo-ink/60"><Lock className="h-3 w-3" aria-hidden="true" /> On this device</span>
+      </div>
+      {hunch.phase === "loading" && <p className="mt-3 text-xs text-ilo-ink/70" role="status">Listening to this conversation…</p>}
+      {hunch.phase === "empty" && <p className="mt-3 text-xs text-ilo-ink/70">Waiting for the student.</p>}
+      {value && (
+        <div className="mt-3">
+          <p className={`text-sm font-semibold ${crisis ? "text-ilo-crisis" : "text-ilo-deep"}`}>
+            {value.display} <span className="font-medium text-ilo-ink/60">{percent.format(value.probability)}</span>
+          </p>
+          {value.topic && <p className="mt-2 text-xs font-semibold text-ilo-deep">{value.topic}</p>}
+          {value.followup && <p className="mt-1 text-xs leading-relaxed text-ilo-ink/80">{value.followup}</p>}
+          <p className="mt-3 text-[10px] leading-snug text-ilo-ink/60">A cue on this device, not a diagnosis.</p>
+          {crisis && (
+            <p className="mt-1 text-[10px] leading-snug text-ilo-crisis">
+              If the student may be in immediate danger, use Escalate and call <a href="tel:14416" className="font-bold underline">Tele-MANAS 14416</a>.
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function ContextPanel({ convo, saveNote, nowMs, noteStatus, hunch, onClose }: {
+  convo: InboxConvo;
+  saveNote: (id: string, text: string) => Promise<boolean>;
+  nowMs: number;
+  noteStatus: "opening" | "ready";
+  hunch: HunchState;
+  onClose?: () => void;
+}) {
   const tag = rowTag(convo);
   return (
     <div className="space-y-4 pb-20 xl:pb-16">
@@ -94,6 +135,8 @@ export function ContextPanel({ convo, saveNote, nowMs, onClose }: { convo: Inbox
         {/* <p className="mt-3 text-[10px] leading-snug text-ilo-ink/60">You see an alias only. Names stay hidden.</p> */}
       </section>
 
+      <HunchCard hunch={hunch} />
+
       <section className={card} aria-labelledby="next-title">
         <div className="flex items-center justify-between">
           <h3 id="next-title" className={eyebrow}>Next session</h3>
@@ -118,7 +161,11 @@ export function ContextPanel({ convo, saveNote, nowMs, onClose }: { convo: Inbox
           <span className="flex items-center gap-1 text-[10px] text-ilo-ink/60"><Lock className="h-3 w-3" aria-hidden="true" /> Only you can see this</span>
         </div>
         <div className="mt-3">
-          <NoteBox key={convo.id} id={convo.id} initial={convo.note} save={saveNote} />
+          {noteStatus === "opening" ? (
+            <p className="text-xs text-ilo-ink/70" role="status">Opening your notes…</p>
+          ) : (
+            <NoteBox key={`${convo.id}:${convo.sealedNote?.nonce ?? "open"}`} id={convo.id} initial={convo.note} save={saveNote} />
+          )}
         </div>
         <p className="flex items-center gap-1 text-[10px] text-ilo-ink/60"><Lock className="h-3 w-3" aria-hidden="true" /> Never visible to campus administrators</p>
       </section>

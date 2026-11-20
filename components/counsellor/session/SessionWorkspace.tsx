@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, CalendarPlus, CheckCircle2, Lock, MessageCircle, UserX } from "lucide-react";
 import { JoinSessionButton } from "@/components/call/JoinSessionButton";
 import { useE2EE } from "@/components/e2ee/E2EEProvider";
+import { SealedBookingNote } from "@/components/counsellor/SealedBookingNote";
 import type { SessionData } from "@/lib/counsellor-schedule";
 import { createClient } from "@/lib/supabase/client";
 import { MODE_META, dateTimeOf, fullWhen, scheduleError, timeOf, type Outcome } from "@/lib/schedule-shared";
@@ -169,10 +170,10 @@ export function SessionWorkspace({ data }: { data: SessionData }) {
             {error && <p role="alert" className="mt-3 text-xs font-semibold text-ilo-crisis">{error}</p>}
           </section>
 
-          {appt.studentNote && (
+          {(appt.bookingNote || appt.legacyBookingNote) && (
             <section className={card} aria-labelledby="shared-title">
               <h2 id="shared-title" className="font-display text-lg text-ilo-deep">What they shared when booking</h2>
-              <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-ilo-ink">{appt.studentNote}</p>
+              <SealedBookingNote appointmentId={appt.id} note={appt.bookingNote} legacy={appt.legacyBookingNote} />
             </section>
           )}
 

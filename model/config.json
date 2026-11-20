@@ -1,0 +1,13 @@
+{
+  "id2label": {
+    "0": "Anxiety",
+    "1": "Bipolar",
+    "2": "Depression",
+    "3": "Normal",
+    "4": "Personality disorder",
+    "5": "Stress",
+    "6": "Suicidal"
+  },
+  "max_len": 256,
+  "base_model": "bert-base-uncased"
+}

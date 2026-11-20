@@ -7,6 +7,10 @@ import { createClient } from "@/lib/supabase/client";
 import { E2EEGate } from "@/components/e2ee/E2EEGate";
 import { useE2EE } from "@/components/e2ee/E2EEProvider";
 import { fromStore, matchesFilter, sortConvos, type Filter, type InboxConvo, type Msg } from "@/lib/inbox-shared";
+import { requestScore } from "@/lib/mental-health/engine";
+import { useSignalPrefs } from "@/lib/mental-health/SignalBridge";
+import { useSessionHunch } from "@/lib/session-hunch/engine";
+import type { Turn } from "@/lib/session-hunch/hunch";
 import { ChatPane } from "./ChatPane";
 import { ContextPanel } from "./ContextPanel";
 import { ConversationList } from "./ConversationList";
@@ -36,7 +40,8 @@ export function InboxView(props: Props) {
 function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, setupNeeded }: Props) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
-  const { client, summaries, rev } = useE2EE();
+  const { client, summaries, rev, state } = useE2EE();
+  const signal = useSignalPrefs();
   const lgUp = useMediaQuery("(min-width: 1024px)");
   const xlUp = useMediaQuery("(min-width: 1280px)");
 
@@ -51,6 +56,7 @@ function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, 
   const [ctxOpen, setCtxOpen] = useState(false);
   const [now, setNow] = useState(nowMs);
   const [flash, setFlash] = useState<string | null>(null);
+  const [readyNotes, setReadyNotes] = useState<Record<string, boolean>>({});
 
   const localRef = useRef(local);
   useEffect(() => { localRef.current = local; });
@@ -59,13 +65,71 @@ function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, 
   const firstRender = useRef(true);
   useEffect(() => {
     if (firstRender.current) { firstRender.current = false; return; }
-    setLocal(serverConvos);
-  }, [serverConvos]);
+    setLocal((cur) => serverConvos.map((incoming) => {
+      const prev = cur.find((c) => c.id === incoming.id);
+      if (!prev || !readyNotes[incoming.id]) return incoming;
+      return { ...incoming, note: prev.note, sealedNote: prev.sealedNote ?? incoming.sealedNote, legacyNote: prev.legacyNote ? null : incoming.legacyNote };
+    }));
+  }, [serverConvos, readyNotes]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  const seenNotes = useRef(new Set<string>());
+  // Open sealed notes on this device. An old clear note is sealed here, then the server copy is cleared.
+  useEffect(() => {
+    if (!client || state !== "ready") return;
+    let live = true;
+    for (const c of localRef.current) {
+      if (!c.sealedNote && !c.legacyNote) seenNotes.current.add(c.id);
+    }
+    const pending = localRef.current.filter((c) => (c.sealedNote || c.legacyNote) && !seenNotes.current.has(c.id));
+    for (const c of pending) seenNotes.current.add(c.id);
+    const markReady = (ids: string[]) => {
+      if (!live || ids.length === 0) return;
+      setReadyNotes((cur) => {
+        let changed = false;
+        const next = { ...cur };
+        for (const id of ids) if (!next[id]) { next[id] = true; changed = true; }
+        return changed ? next : cur;
+      });
+    };
+    if (pending.length === 0) {
+      markReady([...seenNotes.current]);
+      return;
+    }
+    void (async () => {
+      for (const c of pending) {
+        try {
+          if (c.sealedNote) {
+            const text = await client.openText(c.sealedNote);
+            if (!live) return;
+            setLocal((cur) => cur.map((x) => (x.id === c.id ? { ...x, note: text } : x)));
+          } else if (c.legacyNote) {
+            const sealed = await client.sealText(c.legacyNote);
+            const { error } = await supabase.rpc("save_conversation_note", {
+              p_conversation_id: c.id,
+              p_note_ciphertext: sealed.ciphertext,
+              p_note_nonce: sealed.nonce,
+            });
+            if (!live) return;
+            const kept = c.legacyNote;
+            setLocal((cur) => cur.map((x) => x.id === c.id ? { ...x, note: kept, legacyNote: error ? x.legacyNote : null, sealedNote: error ? x.sealedNote : sealed } : x));
+          }
+        } catch {
+          if (!live) return;
+          setLocal((cur) => cur.map((x) => (x.id === c.id ? { ...x, note: "" } : x)));
+        }
+      }
+      markReady(pending.map((c) => c.id).concat([...seenNotes.current]));
+    })();
+    return () => {
+      live = false;
+      for (const c of pending) seenNotes.current.delete(c.id);
+    };
+  }, [client, state, serverConvos, supabase]);
 
   const convos = useMemo<InboxConvo[]>(() => local.map((c) => {
     const s = summaries[c.id];
@@ -106,9 +170,15 @@ function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, 
   useEffect(() => {
     if (!client || !selectedId) { setMsgs([]); return; }
     let live = true;
-    client.messages(selectedId).then((list) => { if (live) setMsgs(list.map(fromStore)); });
+    client.messages(selectedId).then((list) => {
+      if (!live) return;
+      setMsgs(list.map(fromStore));
+      if (signal?.enabled) {
+        for (const m of list) if (!m.mine && !m.signal && m.body.trim()) requestScore(m.id, m.body);
+      }
+    });
     return () => { live = false; };
-  }, [client, selectedId, rev]);
+  }, [client, selectedId, rev, signal?.enabled]);
 
   // Opening a conversation marks it read
   const unreadHere = selectedId ? summaries[selectedId]?.unread ?? 0 : 0;
@@ -138,20 +208,37 @@ function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, 
       p_resolved: patch.resolved ?? null,
     });
     if (error) {
-      console.error("set_conversation_flags failed", error);
+      console.error("set_conversation_flags failed");
       setLocal((cur) => cur.map((c) => (c.id === id ? { ...c, pinned: prev.pinned, urgent: prev.urgent, archived: prev.archived, resolved: prev.resolved } : c)));
-      showFlash(`Couldn't save that change: ${error.message}`);
+      showFlash("Couldn't save that change.");
     }
   }
 
   const saveNote = useCallback(async (id: string, text: string) => {
-    const { error } = await supabase.rpc("save_conversation_note", { p_conversation_id: id, p_note: text });
-    if (error) return false;
-    setLocal((cur) => cur.map((c) => (c.id === id ? { ...c, note: text } : c)));
-    return true;
-  }, [supabase]);
+    if (!client || state !== "ready") return false;
+    try {
+      const sealed = text.trim() ? await client.sealText(text) : null;
+      const { error } = await supabase.rpc("save_conversation_note", {
+        p_conversation_id: id,
+        p_note_ciphertext: sealed?.ciphertext ?? null,
+        p_note_nonce: sealed?.nonce ?? null,
+      });
+      if (error) return false;
+      setLocal((cur) => cur.map((c) => (c.id === id ? { ...c, note: text, legacyNote: null, sealedNote: sealed } : c)));
+      setReadyNotes((cur) => ({ ...cur, [id]: true }));
+      return true;
+    } catch {
+      return false;
+    }
+  }, [supabase, client, state]);
 
+  const turns = useMemo<Turn[]>(
+    () => msgs.map((m) => ({ speaker: m.mine ? "counsellor" : "student", text: m.body })),
+    [msgs],
+  );
+  const hunch = useSessionHunch(signal?.enabled ? turns : null);
   const current = convos.find((c) => c.id === selectedId) ?? null;
+  const noteStatus = (c: InboxConvo): "opening" | "ready" => (c.sealedNote || c.legacyNote) && !readyNotes[c.id] ? "opening" : "ready";
   const totalUnread = convos.reduce((n, c) => n + c.unread, 0);
 
   return (
@@ -194,6 +281,10 @@ function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, 
             onOpenContext={() => setCtxOpen(true)}
             onFlags={(patch) => void setFlags(current.id, patch)}
             nowMs={now}
+            signalsOn={signal?.enabled ?? false}
+            onToggleSignals={(on) => signal?.toggle(on)}
+            votes={signal?.votes ?? {}}
+            onVote={(id, vote) => signal?.vote(id, vote)}
           />
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
@@ -206,7 +297,7 @@ function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, 
 
       {xlUp && current && (
         <aside aria-label="Student context" className="hidden min-h-0 w-80 shrink-0 overflow-y-auto xl:block">
-          <ContextPanel convo={current} saveNote={saveNote} nowMs={now} />
+          <ContextPanel convo={current} saveNote={saveNote} nowMs={now} noteStatus={noteStatus(current)} hunch={hunch} />
         </aside>
       )}
 
@@ -214,7 +305,7 @@ function InboxInner({ convos: serverConvos, selectedId: initialSelected, nowMs, 
         <div className="fixed inset-0 z-40">
           <div className="absolute inset-0 bg-ilo-deep/40" onClick={() => setCtxOpen(false)} aria-hidden="true" />
           <aside role="dialog" aria-modal="true" aria-label="Student context" className="absolute inset-y-0 right-0 w-full max-w-sm overflow-y-auto bg-ilo-bg p-4 shadow-2xl">
-            <ContextPanel convo={current} saveNote={saveNote} nowMs={now} onClose={() => setCtxOpen(false)} />
+            <ContextPanel convo={current} saveNote={saveNote} nowMs={now} noteStatus={noteStatus(current)} hunch={hunch} onClose={() => setCtxOpen(false)} />
           </aside>
         </div>
       )}

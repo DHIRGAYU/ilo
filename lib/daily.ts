@@ -25,7 +25,10 @@ export async function createDailyRoom(name: string) {
         max_participants: 2,
         enable_chat: false,
         enable_screenshare: false,
+        enable_knocking: false,
         enable_prejoin_ui: false,
+        enable_recording: false, // Daily rejects an empty list; false keeps cloud, local, and raw-tracks recording off
+        enable_transcription_storage: false,
       },
     }),
   });

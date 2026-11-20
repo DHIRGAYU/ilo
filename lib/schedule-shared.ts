@@ -14,6 +14,16 @@ export type Window = { start: string; end: string }; // "HH:MM"
 export type Availability = Record<number, Window[]>;  // 1 = Mon ... 7 = Sun
 export type StudentOption = { id: string; label: string };
 
+// A booking note the server cannot read. senderKey is set when the student sealed it.
+// Both sender fields are null when this device sealed an older clear note with the notes key.
+export type SealedBookingNote = {
+  ciphertext: string;
+  nonce: string;
+  senderKey: string | null;
+  clientId: string | null;
+};
+
+
 export type CalAppt = {
   id: string;
   studentId: string;
@@ -23,7 +33,8 @@ export type CalAppt = {
   mode: Mode;
   status: Status;
   kind: "First conversation" | "Follow-up";
-  studentNote: string | null; // what the student wrote when booking
+  bookingNote: SealedBookingNote | null; // locked to this counsellor; opened on their device
+  legacyBookingNote: string | null; // an old clear note, present once so this device can seal it
   outcome: Outcome | null;
   followUp: boolean;
 };

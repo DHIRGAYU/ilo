@@ -4,7 +4,7 @@ import { Logo } from "@/components/ui/Logo";
 import { SignInButton } from "@/components/SignInButton";
 
 const MESSAGES: Record<string, string> = {
-  not_registered: "Please sign in with your college email ID (it ends in .ac.in).",
+  not_registered: "Sign-in only accepts a college Google account ending in .ac.in.",
   signin_failed: "Sign-in didn't finish. Please try again.",
 };
 

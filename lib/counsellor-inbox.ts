@@ -4,7 +4,10 @@ import { whenLabel, type InboxConvo, type InboxEvent, type NextSession } from "@
 import { createClient } from "@/lib/supabase/server";
 
 type ConvRow = { id: string; student_id: string };
-type FlagRow = { conversation_id: string; pinned: boolean; urgent: boolean; archived: boolean; resolved: boolean; note: string };
+type FlagRow = {
+  conversation_id: string; pinned: boolean; urgent: boolean; archived: boolean; resolved: boolean;
+  note: string | null; note_ciphertext?: string | null; note_nonce?: string | null;
+};
 type ApptRow = Pick<Appt, "id" | "student_id" | "starts_at" | "ends_at" | "mode" | "status" | "cancelled_at" | "created_at">;
 
 export type Inbox = { convos: InboxConvo[]; selectedId: string | null; nowMs: number; setupNeeded: boolean };
@@ -19,9 +22,14 @@ export async function getInbox(selectedParam?: string): Promise<Inbox | null> {
   const supabase = await createClient();
   const nowMs = ws.nowMs;
 
-  const [convRes, flagRes, apptRes] = await Promise.all([
+  const flagSelect = "conversation_id, pinned, urgent, archived, resolved, note, note_ciphertext, note_nonce";
+  const sealedFlags = await supabase.from("conversation_flags").select(flagSelect).eq("counsellor_id", ws.me.id);
+  const plainFlags = sealedFlags.error
+    ? await supabase.from("conversation_flags").select("conversation_id, pinned, urgent, archived, resolved, note").eq("counsellor_id", ws.me.id)
+    : null;
+  const flagRes = plainFlags ?? sealedFlags;
+  const [convRes, apptRes] = await Promise.all([
     supabase.from("conversations").select("id, student_id").eq("counsellor_id", ws.me.id),
-    supabase.from("conversation_flags").select("conversation_id, pinned, urgent, archived, resolved, note").eq("counsellor_id", ws.me.id),
     supabase
       .from("appointments")
       .select("id, student_id, starts_at, ends_at, mode, status, cancelled_at, created_at")
@@ -55,6 +63,7 @@ export async function getInbox(selectedParam?: string): Promise<Inbox | null> {
     }
     events.sort((p, q) => p.at - q.at);
 
+    const sealedNote = f?.note_ciphertext && f?.note_nonce ? { ciphertext: f.note_ciphertext, nonce: f.note_nonce } : null;
     return {
       id: c.id,
       alias: studentLabel(c.student_id, ws.names),
@@ -64,7 +73,9 @@ export async function getInbox(selectedParam?: string): Promise<Inbox | null> {
       urgent: f?.urgent ?? false,
       archived: f?.archived ?? false,
       resolved: f?.resolved ?? false,
-      note: f?.note ?? "",
+      note: "",
+      sealedNote,
+      legacyNote: sealedNote ? null : (f?.note?.trim() ? f.note : null),
       sessionsHeld: held,
       next,
       events: events.slice(-8),

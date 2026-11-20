@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { callbackOrigin } from "@/lib/security/callback-origin";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
@@ -15,8 +16,12 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      const forwardedHost = request.headers.get("x-forwarded-host"); // set by Vercel
-      const base = process.env.NODE_ENV !== "development" && forwardedHost ? `https://${forwardedHost}` : origin;
+      const base = callbackOrigin({
+        requestOrigin: origin,
+        forwardedHost: request.headers.get("x-forwarded-host"),
+        siteHosts: process.env.SITE_HOSTS,
+        nodeEnv: process.env.NODE_ENV ?? "production",
+      });
       return NextResponse.redirect(`${base}/home`);
     }
   }

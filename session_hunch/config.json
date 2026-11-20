@@ -1,0 +1,89 @@
+{
+  "labels": [
+    "Normal",
+    "Anxiety",
+    "Stress",
+    "Depression",
+    "Suicidal",
+    "Other"
+  ],
+  "temperature": 0.7980059385299683,
+  "max_len": 128,
+  "base_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "topic_seeds": {
+    "academic pressure": [
+      "I am overwhelmed by my grades and coursework",
+      "I am scared of failing my classes",
+      "there is too much assignment work and I am falling behind"
+    ],
+    "exam anxiety": [
+      "I panic before exams and my mind goes blank",
+      "I cannot stop worrying about the upcoming test results"
+    ],
+    "family pressure/conflict": [
+      "my parents expect too much from me",
+      "I fight with my family at home all the time",
+      "my parents compare me to others and I feel pressured"
+    ],
+    "peer relationships / loneliness": [
+      "I have no friends and feel left out",
+      "nobody talks to me and I feel lonely at college",
+      "my friends stopped including me"
+    ],
+    "bullying / harassment": [
+      "people bully me and make fun of me",
+      "someone keeps harassing me and I feel unsafe"
+    ],
+    "romantic relationship / breakup": [
+      "my boyfriend or girlfriend broke up with me",
+      "my relationship is falling apart and it hurts"
+    ],
+    "financial stress": [
+      "I cannot afford my fees and expenses",
+      "money problems are making me stressed about studying"
+    ],
+    "sleep / burnout": [
+      "I cannot sleep at night and I am exhausted all day",
+      "I feel burned out and have no energy"
+    ],
+    "homesickness / transition": [
+      "I miss home and cannot adjust to the hostel",
+      "I feel out of place in this new city and college"
+    ],
+    "self-esteem / identity": [
+      "I feel worthless and not good enough",
+      "I hate myself and feel like a failure",
+      "I do not know who I am or what I want"
+    ],
+    "substance use": [
+      "I have been drinking or smoking too much to cope",
+      "I rely on drugs to get through the day"
+    ],
+    "grief / loss": [
+      "someone close to me died and I cannot cope",
+      "I lost a family member and feel empty"
+    ]
+  },
+  "followups": {
+    "academic pressure": "What part of the workload feels heaviest right now, and what happens when you fall behind?",
+    "exam anxiety": "What do you notice in your body and thoughts just before an exam?",
+    "family pressure/conflict": "How do conversations about studies go at home? What do you wish they understood?",
+    "peer relationships / loneliness": "When do you feel most alone, and is there anyone you feel even a little comfortable with?",
+    "bullying / harassment": "Can you tell me more about what has been happening, and whether you feel safe now?",
+    "romantic relationship / breakup": "How has this been affecting your days, sleep and studies?",
+    "financial stress": "What worries you most about the money situation, and have you spoken to anyone about support options?",
+    "sleep / burnout": "What does a typical day and night look like for you lately?",
+    "homesickness / transition": "What do you miss most, and what has been hardest about settling in?",
+    "self-esteem / identity": "When you say you feel not good enough, when did that feeling start?",
+    "substance use": "How much and how often, and what does it help you with in the moment?",
+    "grief / loss": "Would you like to tell me about them, and how you have been coping since?"
+  },
+  "display": {
+    "Normal": "no clear concern",
+    "Anxiety": "anxiety / worry-driven distress",
+    "Stress": "stress / overload",
+    "Depression": "low mood / depression-like language",
+    "Suicidal": "possible risk language",
+    "Other": "mixed / unclear"
+  }
+}

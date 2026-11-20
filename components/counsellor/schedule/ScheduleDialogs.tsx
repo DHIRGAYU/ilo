@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
 import { JoinSessionButton } from "@/components/call/JoinSessionButton";
+import { SealedBookingNote } from "@/components/counsellor/SealedBookingNote";
 import { createClient } from "@/lib/supabase/client";
 import {
   DAY_MS, MODE_META, WEEKDAYS, freeSlots, fullWhen, isoWeekday, istDayStart, scheduleError, timeOf, toMin, dayNum, weekdayShort,
@@ -220,10 +221,10 @@ export function AppointmentPanel({ appt, nowMs, onClose, onReschedule, onDone }:
         <div className="flex justify-between gap-3"><dt className="text-ilo-ink/70">How</dt><dd className="font-semibold text-ilo-deep">{MODE_META[appt.mode].long}</dd></div>
         <div className="flex justify-between gap-3"><dt className="text-ilo-ink/70">Length</dt><dd className="font-semibold text-ilo-deep">45 minutes</dd></div>
       </dl>
-      {appt.studentNote && (
+      {(appt.bookingNote || appt.legacyBookingNote) && (
         <div className="mt-4 rounded-xl bg-ilo-bg p-3">
           <p className="text-[10px] font-bold uppercase tracking-wider text-ilo-ink/60">What they shared when booking</p>
-          <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-ilo-ink">{appt.studentNote}</p>
+          <SealedBookingNote appointmentId={appt.id} note={appt.bookingNote} legacy={appt.legacyBookingNote} />
         </div>
       )}
 
